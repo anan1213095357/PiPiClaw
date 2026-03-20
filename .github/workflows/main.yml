@@ -1,4 +1,4 @@
-name: QwenCli AOT Build
+name: PiPiClaw AOT Build
 
 on:
   workflow_dispatch:
@@ -16,13 +16,13 @@ jobs:
       matrix:
         include:
           # Windows x64 使用 UPX
-          - { rid: win-x64, os: windows-latest, ext: zip, exe: QwenCLI.exe, use_upx: true }
+          - { rid: win-x64, os: windows-latest, ext: zip, exe: PiPiClaw.exe, use_upx: true }
           # ARM64 禁用 UPX，依靠 7z 极限压缩
-          - { rid: win-arm64, os: windows-latest, ext: zip, exe: QwenCLI.exe, use_upx: false }
-          - { rid: linux-x64, os: ubuntu-latest, ext: tar.gz, exe: QwenCLI, use_upx: true }
-          - { rid: linux-arm64, os: ubuntu-24.04-arm, ext: tar.gz, exe: QwenCLI, use_upx: false }
-          - { rid: osx-x64, os: macos-latest, ext: tar.gz, exe: QwenCLI, use_upx: false }
-          - { rid: osx-arm64, os: macos-latest, ext: tar.gz, exe: QwenCLI, use_upx: false }
+          - { rid: win-arm64, os: windows-latest, ext: zip, exe: PiPiClaw.exe, use_upx: false }
+          - { rid: linux-x64, os: ubuntu-latest, ext: tar.gz, exe: PiPiClaw, use_upx: true }
+          - { rid: linux-arm64, os: ubuntu-24.04-arm, ext: tar.gz, exe: PiPiClaw, use_upx: false }
+          - { rid: osx-x64, os: macos-latest, ext: tar.gz, exe: PiPiClaw, use_upx: false }
+          - { rid: osx-arm64, os: macos-latest, ext: tar.gz, exe: PiPiClaw, use_upx: false }
 
     steps:
       - uses: actions/checkout@v4
@@ -39,13 +39,13 @@ jobs:
           sudo apt-get install -y clang zlib1g-dev build-essential 7zip
 
       - name: Build AOT
-        run: >
-          dotnet publish -c Release 
-          -r ${{ matrix.rid }} 
-          -p:PublishAot=true 
-          -p:StripSymbols=true 
-          -p:DebugType=none 
-          -o ./publish_dir
+        run: |
+          dotnet publish -c Release \
+            -r ${{ matrix.rid }} \
+            -p:PublishAot=true \
+            -p:StripSymbols=true \
+            -p:DebugType=none \
+            -o ./publish_dir
 
       # 仅在非 ARM 且标记为 use_upx 的情况下使用 UPX
       - name: UPX Compression (x64 only)
@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           cd ./publish_dir
-          # 物理清除调试文件
+          # 物理清除可能残余的调试文件
           rm -rf *.pdb *.dbg *.dsym
           
           if [[ "${{ matrix.os }}" != "windows-latest" ]]; then
@@ -69,19 +69,18 @@ jobs:
 
           # 使用 7z 代替标准 tar/zip，使用 LZMA2 算法和 9 级最高压缩
           if [ "${{ matrix.ext }}" == "zip" ]; then
-            7z a -tzip -mx=9 ../QwenCli_${{ matrix.rid }}.zip *
+            7z a -tzip -mx=9 ../PiPiClaw_${{ matrix.rid }}.zip *
           else
-            # 对于 linux/macOS，先打包 tar，再用 7z 进行极致压缩成 .tar.gz (或直接 .7z)
-            # 这里为了符合你的后缀要求，使用最高级别的 gzip 压缩，或者你也可以改为 .7z 后缀
-            tar cf - * | 7z a -si -tgzip -mx=9 ../QwenCli_${{ matrix.rid }}.tar.gz
+            # 对于 linux/macOS，先打包 tar，再用 7z 进行极致压缩成 .tar.gz
+            tar cf - * | 7z a -si -tgzip -mx=9 ../PiPiClaw_${{ matrix.rid }}.tar.gz
           fi
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Latest Build"
-          files: QwenCli_${{ matrix.rid }}.${{ matrix.ext }}
+          name: "PiPiClaw Latest Build"
+          files: PiPiClaw_${{ matrix.rid }}.${{ matrix.ext }}
           make_latest: true
           prerelease: false
           append_body: true
