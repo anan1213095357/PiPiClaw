@@ -1,4 +1,4 @@
-Name: PiPiClaw AOT Build
+name: PiPiClaw AOT Build
 
 on:
   workflow_dispatch:
