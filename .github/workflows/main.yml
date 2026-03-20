@@ -17,19 +17,18 @@ jobs:
         include:
           # === Windows 阵营 ===
           - { rid: win-x64,   os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: true }
-          # win-x86 AOT 产物使用 UPX 极易报错，为了最高兼容性禁用 UPX
+          # win-x86 和 win-arm64 AOT 产物使用 UPX 极易报错，为了最高兼容性禁用 UPX
           - { rid: win-x86,   os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: false }
           - { rid: win-arm64, os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: false }
 
           # === Linux 阵营 ===
           - { rid: linux-x64,   os: ubuntu-latest,    ext: tar.gz, exe: PiPiClaw, use_upx: true }
           - { rid: linux-arm64, os: ubuntu-24.04-arm, ext: tar.gz, exe: PiPiClaw, use_upx: false }
-          # 32位 ARM：锁定 ubuntu-22.04 避免 apt 源格式冲突引发 Exit code 100
+          # 32位 ARM：锁定 ubuntu-22.04 避免 apt 源格式冲突
           - { rid: linux-arm,   os: ubuntu-22.04,     ext: tar.gz, exe: PiPiClaw, use_upx: false }
 
           # === macOS 阵营 ===
-          # GitHub 正在废弃 macos-13，统一使用 macos-latest (ARM64)。
-          # .NET AOT 可通过 Apple Clang 直接在 ARM64 环境交叉编译出原生的 x64 产物
+          # 统一使用 macos-latest (ARM64)，通过 Apple Clang 原生/交叉编译
           - { rid: osx-x64,   os: macos-latest,   ext: tar.gz, exe: PiPiClaw, use_upx: false }
           - { rid: osx-arm64, os: macos-latest,   ext: tar.gz, exe: PiPiClaw, use_upx: false }
 
@@ -50,11 +49,13 @@ jobs:
           
           # 针对 linux-arm (32位) 配置交叉编译工具链和正确的底层镜像源
           if [ "${{ matrix.rid }}" == "linux-arm" ]; then
-            # 修复 Exit Code 100：将默认源限定为 amd64/i386，并为 armhf 添加专用的 ports 源
+            # 1. 将默认源限定为 amd64/i386
             sudo sed -i 's/deb http/deb [arch=amd64,i386] http/g' /etc/apt/sources.list
-            sudo bash -c 'cat << EOF > /etc/apt/sources.list.d/armhf.list
-            deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-            EOF'
+            
+            # 2. 使用 echo + tee 完美避开 YAML 多行文本缩进陷阱，写入 armhf 专属源
+            echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/armhf.list
+            
+            # 3. 添加架构并安装交叉编译链
             sudo dpkg --add-architecture armhf
             sudo apt-get update
             sudo apt-get install -y gcc-arm-linux-gnueabihf zlib1g-dev:armhf
@@ -83,15 +84,19 @@ jobs:
         run: |
           cd ./publish_dir
           
+          # 清理调试符号文件
           rm -rf *.pdb *.dbg *.dsym
           
+          # 非 Windows 系统赋予执行权限
           if [[ "${{ matrix.os }}" != "windows-latest" ]]; then
             chmod +x ${{ matrix.exe }}
           fi
 
+          # 极致压缩打包
           if [ "${{ matrix.ext }}" == "zip" ]; then
             7z a -tzip -mx=9 ../PiPiClaw_${{ matrix.rid }}.zip *
           else
+            # Linux/macOS 保留执行权限打包
             tar cf - * | 7z a -si -tgzip -mx=9 ../PiPiClaw_${{ matrix.rid }}.tar.gz
           fi
 
