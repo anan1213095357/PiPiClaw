@@ -306,7 +306,22 @@ void ShowPendingTasks()
     }
     catch { /* 忽略解析错误 */ }
 }
-
+// ========================== 获取局域网 IP ==========================
+string GetLocalIpAddress()
+{
+    try
+    {
+        // 借助发往公网 DNS 的 UDP Socket，系统底层会自动解析出当前正在连网的真实本地网卡 IP
+        using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Dgram, 0);
+        socket.Connect("8.8.8.8", 65530);
+        var endPoint = socket.LocalEndPoint as System.Net.IPEndPoint;
+        return endPoint?.Address.ToString() ?? "127.0.0.1";
+    }
+    catch
+    {
+        return "127.0.0.1";
+    }
+}
 // ========================== 9. 主交互死循环 ==========================
 while (true)
 {
@@ -1010,8 +1025,9 @@ async Task StartWebManager()
     try
     {
         listener.Start();
+        string lanIp = GetLocalIpAddress();
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"[Web UI] 网页控制台已启动: http://localhost:5050 ");
+        Console.WriteLine($"[Web UI] 网页控制台已启动:\n  - 本机访问: http://localhost:5050 \n  - 手机扫码或局域网: http://{lanIp}:5050");
         Console.ResetColor();
     }
     catch (Exception ex)
@@ -1043,7 +1059,8 @@ async Task StartWebManager()
 
             if (req.Url!.AbsolutePath == "/")
             {
-                byte[] buffer = Encoding.UTF8.GetBytes(GetWebUIHtml());
+                string htmlContent = GetWebUIHtml().Replace("{{LAN_IP}}", GetLocalIpAddress());
+                byte[] buffer = Encoding.UTF8.GetBytes(htmlContent);
                 res.ContentType = "text/html; charset=utf-8";
                 res.ContentLength64 = buffer.Length;
                 await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
@@ -1442,9 +1459,10 @@ string GetWebUIHtml()
                </div>
 
                <script>
-                   // 1. 初始化二维码
+                   let host = window.location.hostname;
+                   let targetUrl = (host === 'localhost' || host === '127.0.0.1') ? 'http://{{LAN_IP}}:5050/' : window.location.href;
                    new QRCode(document.getElementById("qrcode"), {
-                       text: window.location.href,
+                       text: targetUrl,
                        width: 100,
                        height: 100,
                        colorDark : "#000000",
