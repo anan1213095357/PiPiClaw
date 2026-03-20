@@ -17,20 +17,20 @@ jobs:
         include:
           # === Windows 阵营 ===
           - { rid: win-x64,   os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: true }
-          - { rid: win-x86,   os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: true }
+          # win-x86 AOT 产物使用 UPX 极易报错，为了最高兼容性禁用 UPX
+          - { rid: win-x86,   os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: false }
           - { rid: win-arm64, os: windows-latest, ext: zip,    exe: PiPiClaw.exe, use_upx: false }
 
           # === Linux 阵营 ===
           - { rid: linux-x64,   os: ubuntu-latest,    ext: tar.gz, exe: PiPiClaw, use_upx: true }
-          # 使用 GitHub 原生 ARM64 环境，编译最快最稳
           - { rid: linux-arm64, os: ubuntu-24.04-arm, ext: tar.gz, exe: PiPiClaw, use_upx: false }
-          # 32位 ARM，需在 ubuntu-latest 上进行交叉编译
-          - { rid: linux-arm,   os: ubuntu-latest,    ext: tar.gz, exe: PiPiClaw, use_upx: false }
+          # 32位 ARM：锁定 ubuntu-22.04 避免 apt 源格式冲突引发 Exit code 100
+          - { rid: linux-arm,   os: ubuntu-22.04,     ext: tar.gz, exe: PiPiClaw, use_upx: false }
 
           # === macOS 阵营 ===
-          # macOS 13 是最后一个默认 x86_64 的 runner，确保原生编译 Intel 版本
-          - { rid: osx-x64,   os: macos-13,       ext: tar.gz, exe: PiPiClaw, use_upx: false }
-          # macOS 14+ 默认是 M1/ARM64 runner
+          # GitHub 正在废弃 macos-13，统一使用 macos-latest (ARM64)。
+          # .NET AOT 可通过 Apple Clang 直接在 ARM64 环境交叉编译出原生的 x64 产物
+          - { rid: osx-x64,   os: macos-latest,   ext: tar.gz, exe: PiPiClaw, use_upx: false }
           - { rid: osx-arm64, os: macos-latest,   ext: tar.gz, exe: PiPiClaw, use_upx: false }
 
     steps:
@@ -48,8 +48,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev build-essential 7zip
           
-          # 针对 linux-arm (32位) 配置交叉编译工具链
+          # 针对 linux-arm (32位) 配置交叉编译工具链和正确的底层镜像源
           if [ "${{ matrix.rid }}" == "linux-arm" ]; then
+            # 修复 Exit Code 100：将默认源限定为 amd64/i386，并为 armhf 添加专用的 ports 源
+            sudo sed -i 's/deb http/deb [arch=amd64,i386] http/g' /etc/apt/sources.list
+            sudo bash -c 'cat << EOF > /etc/apt/sources.list.d/armhf.list
+            deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+            EOF'
             sudo dpkg --add-architecture armhf
             sudo apt-get update
             sudo apt-get install -y gcc-arm-linux-gnueabihf zlib1g-dev:armhf
@@ -66,7 +71,6 @@ jobs:
             -o ./publish_dir
 
       - name: UPX Compression
-        # 仅对兼容性好的平台执行 UPX
         if: matrix.use_upx == true
         uses: svenstaro/upx-action@v2
         with:
@@ -79,20 +83,15 @@ jobs:
         run: |
           cd ./publish_dir
           
-          # 清理可能残留的调试文件 (针对不同系统的后缀)
           rm -rf *.pdb *.dbg *.dsym
           
-          # Unix 系统赋予执行权限
           if [[ "${{ matrix.os }}" != "windows-latest" ]]; then
             chmod +x ${{ matrix.exe }}
           fi
 
-          # 极致压缩打包逻辑
           if [ "${{ matrix.ext }}" == "zip" ]; then
-            # Windows 使用 7z 的最大压缩率打 zip 包
             7z a -tzip -mx=9 ../PiPiClaw_${{ matrix.rid }}.zip *
           else
-            # Linux/macOS 先用 tar 打包保留文件权限（非常重要），再通过管道用 7z 进行极致 gzip 压缩
             tar cf - * | 7z a -si -tgzip -mx=9 ../PiPiClaw_${{ matrix.rid }}.tar.gz
           fi
 
