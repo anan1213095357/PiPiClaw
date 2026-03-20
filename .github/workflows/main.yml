@@ -43,23 +43,24 @@ jobs:
         if: startsWith(matrix.rid, 'linux')
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev build-essential 7zip
-          
+          # 新增 lld，解决默认 bfd 链接器跨平台水土不服导致 Exit Code 1 的问题
+          sudo apt-get install -y clang zlib1g-dev build-essential 7zip lld
+          
           # 针对 linux-arm (32位) 配置交叉编译工具链和正确的底层镜像源
           if [ "${{ matrix.rid }}" == "linux-arm" ]; then
             # 1. 更强大的正则修复：捕获所有不包含 [arch=...] 标签的 deb 行
             sudo sed -i -E 's/^deb[[:space:]]+([^\[])/deb [arch=amd64,i386] \1/g' /etc/apt/sources.list
             sudo sed -i -E 's/^deb[[:space:]]+([^\[])/deb [arch=amd64,i386] \1/g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
-            
-            # 2. 写入 armhf 专属的 ports 源
+            
+            # 2. 写入 armhf 专属的 ports 源 (补全 updates 和 security 防依赖版本断层)
             echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/armhf.list
             echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/armhf.list
             echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/armhf.list
-            
-            # 3. 启用架构并重新更新，加入 libssl-dev 和 libkrb5-dev 防加密库链接报错
+            
+            # 3. 启用架构并重新更新
             sudo dpkg --add-architecture armhf
             sudo apt-get update
-            sudo apt-get install -y gcc-arm-linux-gnueabihf zlib1g-dev:armhf libssl-dev:armhf libkrb5-dev:armhf
+            sudo apt-get install -y gcc-arm-linux-gnueabihf zlib1g-dev:armhf
           fi
 
       - name: Build AOT
@@ -67,10 +68,10 @@ jobs:
         run: |
           EXTRA_ARGS=""
           if [ "${{ matrix.rid }}" == "linux-arm" ]; then
-            # 仅针对 linux-arm (32位) 显式指定交叉编译器和分离符号工具，完全不影响其他架构
-            EXTRA_ARGS="-p:CppCompilerAndLinker=arm-linux-gnueabihf-gcc -p:ObjCopyName=arm-linux-gnueabihf-objcopy"
+            # 退回 .NET 强依赖的 clang。注入专属 objcopy，并强制启用 lld 完美链接
+            EXTRA_ARGS="-p:ObjCopyName=arm-linux-gnueabihf-objcopy -p:LinkerFlavor=lld"
           fi
-          
+          
           dotnet publish -c Release \
             -r ${{ matrix.rid }} \
             -p:PublishAot=true \
@@ -91,9 +92,9 @@ jobs:
         shell: bash
         run: |
           cd ./publish_dir
-          
+          
           rm -rf *.pdb *.dbg *.dsym
-          
+          
           if [[ "${{ matrix.os }}" != "windows-latest" ]]; then
             chmod +x ${{ matrix.exe }}
           fi
