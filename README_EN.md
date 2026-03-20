@@ -1,12 +1,14 @@
-# <div align="left" style="display: flex; align-items: center; line-height: 1.2;"> <img src="./141221163.png" width="32" height="32" style="margin-right: 15px;"> <span style="font-size: 32px; font-weight: bold;">QwenCLI - Intelligent DevOps Automation Agent</span> </div>
+# <div align="left" style="display: flex; align-items: center; line-height: 1.2;"> <img src="./141221163.png" width="32" height="32" style="margin-right: 15px;"> <span style="font-size: 32px; font-weight: bold;">PiPiClaw - Intelligent DevOps Automation Agent</span> </div>
+
 <div align="center">
 
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)
+![Arch](https://img.shields.io/badge/Arch-x86%20%7C%20x64%20%7C%20ARM32%20%7C%20ARM64-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-![Version](https://img.shields.io/badge/Version-v1.5.0-orange?style=flat-square)
+![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
 
-**Let AI Be Your DevOps Assistant | Intelligent Automation Expert in the Command Line**
+**🦐 Let AI Be Your DevOps Commander | Intelligent Automation Expert in the Command Line**
 
 **🌐 Language | 语言切换:** [English](README_EN.md) | [中文](README.md)
 
@@ -16,9 +18,9 @@
 
 ## 📖 Project Introduction
 
-**QwenCLI** is an intelligent DevOps automation command-line tool based on large language models. Through natural language interaction, it helps you quickly execute system commands, manage files, and analyze logs, making tedious DevOps tasks simple and efficient.
+**PiPiClaw** is an intelligent DevOps automation command-line tool based on Alibaba Cloud's Qwen large language model. Through natural language interaction, it helps you automatically execute system commands, manage files, analyze logs, and schedule timed tasks, making tedious DevOps work simple and efficient.
 
-Just input natural language instructions, and QwenCLI will understand your intent and automatically call the appropriate tools to complete the task — like having a 24/7 online DevOps expert ready to assist.
+Just input natural language instructions like telling a human, and PiPiClaw will understand your intent and automatically call the appropriate tools to complete the task — like having a 24/7 online DevOps expert ready to assist.
 
 ---
 
@@ -26,11 +28,16 @@ Just input natural language instructions, and QwenCLI will understand your inten
 
 | Feature | Description |
 |------|------|
-| 🔧 **Command Execution** | Supports cross-platform terminal command execution (ls, dir, git, npm, docker, etc.) |
-| 📄 **File Reading** | Intelligently reads text, code, and configuration file contents |
-| ✍️ **File Writing** | Automatically generates code and configuration files and writes them locally |
-| 🖼️ **Image Analysis** | Supports recognition and analysis of local screenshots and photos |
-| 🔍 **Content Search** | Search for files containing specific keywords (such as function names, variable names, class names, etc.) in specified directories |
+| 🔧 **Command Execution** | Cross-platform terminal command execution (ls, git, npm, docker, systemctl, etc.) |
+| 📄 **File Reading** | Intelligently reads text, code, and configuration files with auto encoding detection (UTF-8/GBK) |
+| ✍️ **File Writing** | Automatically generates code and config files, supports partial modifications |
+| 🖼️ **Image Analysis** | Supports recognition and analysis of local screenshots and photos (Base64) |
+| 🔍 **Content Search** | Search for files containing specific keywords in specified directories (function names, variables, classes, etc.) |
+| ⏰ **Scheduled Tasks** | Supports one-time/periodic task scheduling with persistent storage and auto-execution |
+| 🧩 **Skill Extensions** | Search and install extension skills from Skill-Hub to infinitely expand capabilities |
+| 🌐 **Web Console** | Built-in lightweight Web UI (port 5050) for remote browser control |
+| 🧠 **Memory Management** | Multi-turn conversation context memory, auto-cleanup after task completion to save tokens |
+| 🔐 **Permission Handling** | Smart sudo privilege interception with automatic password handling (non-Windows) |
 
 ---
 
@@ -39,107 +46,103 @@ Just input natural language instructions, and QwenCLI will understand your inten
 ### Prerequisites
 
 - [.NET 10.0 SDK](https://dotnet.microsoft.com/download) or higher
-- Alibaba Cloud DashScope API Key ([Get Here](https://dashscope.console.aliyun.com/))
+- Alibaba Cloud DashScope API Key ([Get Here](https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key))
 
 ### Installation & Running
 
 ```bash
 # Clone the project
-git clone https://github.com/anan1213095357/QwenCLI.git
-cd QwenCLI/QwenCLI
+git clone https://github.com/anan1213095357/PiPiClaw.git
+cd PiPiClaw
 
 # Restore dependencies
 dotnet restore
 
-# Configure API Key (choose one)
-# Method 1: Copy configuration file and modify
-cp appsettings.example.json appsettings.json
-# Then edit appsettings.json to fill in your API Key
-
-# Method 2: Use environment variables
-setx QWENCLI_API_KEY "sk-your-api-key-here"
-
 # Run the project
 dotnet run
 ```
+
+On first run, `appsettings.json` will be automatically generated. Follow the prompts to enter your API Key.
 
 ### Publish as Standalone Executable
 
 ```bash
 # Publish AOT compiled version (single file, high performance)
 dotnet publish -c Release -r win-x64 --self-contained true
+dotnet publish -c Release -r osx-x64 --self-contained true
+dotnet publish -c Release -r linux-x64 --self-contained true
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-### Method 1: Configuration File (Recommended for Local Development)
+### Configuration File (appsettings.json)
 
-1. Copy the template file:
-   ```bash
-   cp appsettings.example.json appsettings.json
-   ```
-
-2. Edit `appsettings.json`:
-   ```json
-   {
-     "ApiKey": "sk-your-actual-api-key-here",
-     "Endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-     "Model": "qwen3.5-plus"
-   }
-   ```
-
-### Method 2: Environment Variables (Recommended for Production)
-
-```bash
-# Windows
-setx QWENCLI_API_KEY "sk-your-api-key-here"
-setx QWENCLI_ENDPOINT "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-setx QWENCLI_MODEL "qwen3.5-plus"
-
-# Linux / macOS
-export QWENCLI_API_KEY="sk-your-api-key-here"
-export QWENCLI_ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-export QWENCLI_MODEL="qwen3.5-plus"
+```json
+{
+  "ApiKey": "sk-your-actual-api-key-here",
+  "Model": "qwen3.5-plus",
+  "Endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+  "SudoPassword": ""
+}
 ```
 
-> 🔒 **Security Tip**: `appsettings.json` has been added to `.gitignore` and will not be committed to the Git repository. Do not manually upload files containing real API Keys to public repositories.
+| Config | Description |
+|--------|-------------|
+| `ApiKey` | Alibaba Cloud DashScope API Key |
+| `Model` | AI model to use (default: qwen3.5-plus) |
+| `Endpoint` | API endpoint URL |
+| `SudoPassword` | (Optional) Auto-privilege password for Linux/macOS |
+
+### Environment Variables
+
+```bash
+# macOS / Linux
+export QWENCLI_API_KEY="sk-your-api-key-here"
+export QWENCLI_MODEL="qwen3.5-plus"
+export QWENCLI_ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+
+# Windows PowerShell
+$env:QWENCLI_API_KEY="sk-your-api-key-here"
+```
 
 ---
 
 ## 💡 Usage Examples
 
-After starting QwenCLI, you can input various natural language instructions:
+After starting PiPiClaw, you can input various natural language instructions:
 
+### Basic Operations
 ```
-> Help me check what files are in the current directory
+> Help me scan the current directory for C# source files
 
 > Read the contents of package.json and analyze dependencies
 
-> Create a configuration file named config.json containing database connection information
-
 > Execute git status to check the current repository state
 
-> Analyze the error message in this screenshot (supports image paths)
-
-> Search for all C# files containing "UserService" in the project
+> Check the current memory usage of the system and write the result to memory_log.txt
 ```
 
-### Interface Preview
-
+### File Operations
 ```
-   ____                       ________    ____ 
-  / __ \_      _____  ____   / ____/ /   /  _/ 
- / / / / | /| / / _ \/ __ \ / /   / /    / /   
-/ /_/ /| |/ |/ /  __/ / / // /___/ /____/ /    
-\___\_\|__/|__/\___/_/ /_/ \____/_____/___/
+> Create a configuration file named config.json containing database connection information
 
-v1.5.0 | Cross-Platform DevOps Tool | by using_unfase
+> Replace all Console.WriteLine with Debug.WriteLine in main.cs
+```
 
-Terminal DevOps Agent has accessed the system (supports full file operations).
-Tip: Please enter deployment or DevOps instructions (type 'exit' to terminate connection)
--------------------------------------------------------
+### Scheduled Tasks
+```
+> Take a screenshot every day at 3 PM to see what I'm doing
+
+> Check CPU usage every 30 minutes and log it if it exceeds 80%
+```
+
+### Skill Extensions
+```
+> Search for weather-related skills
+
+> Install the calendar skill
 ```
 
 ---
@@ -147,39 +150,62 @@ Tip: Please enter deployment or DevOps instructions (type 'exit' to terminate co
 ## 🏗️ Project Structure
 
 ```
-QwenCLI/
-├── QwenCLI.csproj              # Project configuration file
-├── Program.cs                # Main program entry point
+PiPiClaw/
+├── Program.cs                # Main program entry (all logic)
+├── PiPiClaw.csproj           # Project configuration file
 ├── README.md                 # Project documentation (Chinese)
 ├── README_EN.md              # Project documentation (English)
 ├── .gitignore                # Git ignore rules
-├── appsettings.json          # Configuration file (for local use, do not commit)
+├── appsettings.json          # Configuration file (local use, do not commit)
 ├── appsettings.example.json  # Configuration template (can be committed)
 ├── Properties/               # Project property configuration
 ├── bin/                      # Build output directory
-└── obj/                      # Temporary build files
+├── obj/                      # Temporary build files
+├── logs/                     # Logs directory
+├── skills/                   # Extension skills directory (auto-created)
+├── pi_history.json           # Conversation memory archive
+└── pi_scheduled_tasks.json   # Scheduled tasks archive
 ```
 
 ---
 
 ## 🔬 Technology Stack
 
-- **Runtime**: .NET 10.0
-- **Compilation Optimization**: AOT (Ahead-of-Time) Compilation
-- **AI Model**: Alibaba Cloud Qwen (qwen3.5-plus)
-- **HTTP Client**: System.Net.Http
-- **JSON Processing**: System.Text.Json
+| Component | Technology |
+|-----------|------------|
+| **Runtime** | .NET 10.0 |
+| **Compilation** | AOT (Ahead-of-Time) Compilation |
+| **AI Model** | Alibaba Cloud Qwen (qwen3.5-plus) |
+| **HTTP Client** | System.Net.Http |
+| **JSON Processing** | System.Text.Json |
+| **Encoding** | UTF-8 / GBK Auto-detection |
 
 ### Project Features
 
 - ✅ **AOT Compilation** - Smaller size, faster startup speed
 - ✅ **Cross-Platform** - Supports Windows, Linux, macOS
 - ✅ **Streaming Conversation** - Supports multi-turn contextual dialogue
-- ✅ **Tool Calling** - Intelligently identifies and calls appropriate tools
+- ✅ **Tool Calling** - 10+ built-in tools with intelligent scheduling
+- ✅ **Task Scheduling** - Persistent task queue with automatic loop execution
+- ✅ **Web UI** - Built-in HTTP server for browser remote control
+- ✅ **Skill System** - Online search and installation of extension skills
 - ✅ **Error Handling** - Comprehensive exception capture and prompts
 - ✅ **Secure Configuration** - API Key separated from code, supports environment variables
-- ✅ **Encoding Compatibility** - Automatically detects file encoding (UTF-8/GBK) to avoid garbled text
-- ✅ **Intelligent Search** - Quickly locate code files containing specific keywords
+- ✅ **Log Compression** - Auto-fold similar log lines to save tokens
+
+---
+
+## 🌐 Web Console
+
+PiPiClaw includes a built-in lightweight Web UI, automatically listening on `http://localhost:5050`
+
+**Features:**
+- 📱 Responsive design, supports mobile/tablet access
+- 🎨 Cyberpunk style interface
+- 📡 Real-time streaming output of tool calls
+- ⏰ Visual scheduled task viewing
+- 🔧 Online API Key and model configuration
+- 📷 QR code in bottom-left corner for quick mobile connection
 
 ---
 
@@ -190,6 +216,7 @@ QwenCLI/
 3. **Network Dependency**: Stable network connection is required to call AI services
 4. **Token Limit**: Large file reading will be automatically truncated to prevent Token overflow
 5. **File Modification**: When modifying existing files, please ensure to provide precise old_content for replacement
+6. **Windows Privilege**: Windows environment cannot automatically handle sudo, please run the program as Administrator
 
 ---
 
@@ -213,7 +240,7 @@ This project is open source under the [MIT License](LICENSE).
 
 <div align="center">
 
-**Made with ❤️ by using_unsafe**
+**🦐 Made with ❤️ by 奶茶叔叔**
 
 If this project helps you, please give it a ⭐ Star to show your support!
 
