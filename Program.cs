@@ -311,11 +311,48 @@ string GetLocalIpAddress()
 {
     try
     {
-        // 借助发往公网 DNS 的 UDP Socket，系统底层会自动解析出当前正在连网的真实本地网卡 IP
-        using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Dgram, 0);
-        socket.Connect("8.8.8.8", 65530);
-        var endPoint = socket.LocalEndPoint as System.Net.IPEndPoint;
-        return endPoint?.Address.ToString() ?? "127.0.0.1";
+        string? backupIp = null;
+        
+        // 遍历所有网络接口
+        foreach (var item in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            // 排除没连上的、回环网卡（127.0.0.1）
+            if (item.OperationalStatus != OperationalStatus.Up) continue;
+            if (item.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+            
+            // 简单暴力地屏蔽掉常见的虚拟网卡名字
+            var name = item.Name.ToLower();
+            var desc = item.Description.ToLower();
+            if (name.Contains("vmware") || name.Contains("virtual") || name.Contains("vbox") ||
+                desc.Contains("vmware") || desc.Contains("virtual") || desc.Contains("vpn") || 
+                desc.Contains("zerotier") || desc.Contains("radmin") || desc.Contains("tailscale"))
+            {
+                continue;
+            }
+
+            foreach (var ip in item.GetIPProperties().UnicastAddresses)
+            {
+                // 只找 IPv4
+                if (ip.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    var ipStr = ip.Address.ToString();
+                    
+                    // 核心逻辑：优先返回最典型的局域网网段
+                    if (ipStr.StartsWith("192.168.") || ipStr.StartsWith("10.") || 
+                       (ipStr.StartsWith("172.") && !ipStr.StartsWith("172.16."))) // Docker 默认常在 172.17+
+                    {
+                        return ipStr; 
+                    }
+                    
+                    // 如果没找到典型局域网，先留个备胎（排除掉 169.254.x.x 无效IP）
+                    if (string.IsNullOrEmpty(backupIp) && !ipStr.StartsWith("169.254."))
+                    {
+                        backupIp = ipStr;
+                    }
+                }
+            }
+        }
+        return backupIp ?? "127.0.0.1";
     }
     catch
     {
