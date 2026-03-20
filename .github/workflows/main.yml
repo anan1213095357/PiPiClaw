@@ -65,11 +65,18 @@ jobs:
       - name: Build AOT
         shell: bash
         run: |
+          EXTRA_ARGS=""
+          if [ "${{ matrix.rid }}" == "linux-arm" ]; then
+            # 仅针对 linux-arm (32位) 显式指定交叉编译器和分离符号工具，完全不影响其他架构
+            EXTRA_ARGS="-p:CppCompilerAndLinker=arm-linux-gnueabihf-gcc -p:ObjCopyName=arm-linux-gnueabihf-objcopy"
+          fi
+          
           dotnet publish -c Release \
             -r ${{ matrix.rid }} \
             -p:PublishAot=true \
             -p:StripSymbols=true \
             -p:DebugType=none \
+            $EXTRA_ARGS \
             -o ./publish_dir
 
       - name: UPX Compression
