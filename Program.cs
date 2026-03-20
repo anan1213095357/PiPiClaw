@@ -1021,7 +1021,7 @@ async Task DownloadFileAsync(string url, string destinationPath)
 async Task StartWebManager()
 {
     var listener = new HttpListener();
-    listener.Prefixes.Add("http://0.0.0.0:5050/");
+    listener.Prefixes.Add("http://+:5050/");
     try
     {
         listener.Start();
