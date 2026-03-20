@@ -9,7 +9,7 @@
 
     <PublishAot>true</PublishAot>
     <OptimizationPreference>Size</OptimizationPreference>
-    
+    
     <StackTraceSupport>false</StackTraceSupport>
     <InvariantGlobalization>true</InvariantGlobalization>
     <DebuggerSupport>false</DebuggerSupport>
@@ -17,6 +17,14 @@
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
     <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+    <MetricsSupport>false</MetricsSupport>
+    <EventPipeSupport>false</EventPipeSupport>
+    <ControlFlowGuard>false</ControlFlowGuard>
+    
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <StripSymbols>true</StripSymbols>
 
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
 
