@@ -1434,7 +1434,7 @@ string GetWebUIHtml()
 
     .container{width:100%; max-width:1000px; z-index:2; display:flex; flex-direction:column; gap:20px;}
 
-    .header{text-align:center; margin-bottom:10px; animation:slideDown .8s ease-out;}
+    .header{text-align:center; animation:slideDown .8s ease-out;}
     .header h1{
       font-size:3em;
       font-weight:900;
@@ -1715,6 +1715,7 @@ string GetWebUIHtml()
 
     .loader-wrapper{
       display:none;
+      height:30px;
       margin:14px auto 0;
       text-align:center;
       color:var(--pipi-cyan);
@@ -1808,7 +1809,6 @@ string GetWebUIHtml()
         <img class="logo-mark" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="PiPiClaw Logo" />
         <span>PiPiClaw</span>
       </h1>
-      <p>SkillHub-ready general agent // Terminal v3.0</p>
     </div>
 
     <div class="box collapsible" id="configBox" style="animation-delay:.1s;">
