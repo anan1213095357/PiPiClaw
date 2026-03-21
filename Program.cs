@@ -48,6 +48,7 @@ string GetConfig(string key, string def = "")
             if (key == "Model" && !string.IsNullOrEmpty(cfg.Model)) return cfg.Model;
             if (key == "Endpoint" && !string.IsNullOrEmpty(cfg.Endpoint)) return cfg.Endpoint;
             if (key == "SudoPassword" && cfg.SudoPassword != null) return cfg.SudoPassword;
+            if (key == "WebPort") return cfg.WebPort > 0 ? cfg.WebPort.ToString() : def;
         }
     }
     catch { /* 忽略解析错误 */ }
@@ -62,7 +63,8 @@ if (!File.Exists("appsettings.json"))
         ApiKey = "your_api_key_here",
         Model = "qwen3.5-plus",
         Endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        SudoPassword = ""
+        SudoPassword = "",
+        WebPort = 5050
     };
     File.WriteAllText("appsettings.json", JsonSerializer.Serialize(defaultConfig, AppJsonContext.Default.AppConfig), Encoding.UTF8);
     Console.ForegroundColor = ConsoleColor.Yellow;
@@ -1094,14 +1096,15 @@ async Task DownloadFileAsync(string url, string destinationPath)
 
 async Task StartWebManager()
 {
+    int webPort = int.TryParse(GetConfig("WebPort", "5050"), out var p) && p > 0 ? p : 5050;
     var listener = new HttpListener();
-    listener.Prefixes.Add("http://+:5050/");
+    listener.Prefixes.Add($"http://+:{webPort}/");
     try
     {
         listener.Start();
         string lanIp = GetLocalIpAddress();
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"[Web UI] 网页控制台已启动:\n  - 本机访问: http://localhost:5050 \n  - 手机扫码或局域网: http://{lanIp}:5050");
+        Console.WriteLine($"[Web UI] 网页控制台已启动:\n  - 本机访问: http://localhost:{webPort} \n  - 手机扫码或局域网: http://{lanIp}:{webPort}");
         Console.ResetColor();
     }
     catch (Exception ex)
@@ -1143,6 +1146,7 @@ async Task StartWebManager()
             {
                 string htmlContent = GetWebUIHtml()
                     .Replace("{{LAN_IP}}", GetLocalIpAddress())
+                    .Replace("{{WEB_PORT}}", webPort.ToString())
                     .Replace("{{LOGO_DATA_URL}}", GetLogoDataUrl());
                 byte[] buffer = Encoding.UTF8.GetBytes(htmlContent);
                 res.ContentType = "text/html; charset=utf-8";
@@ -1157,7 +1161,8 @@ async Task StartWebManager()
                     ApiKey = GetConfig("ApiKey"),
                     Model = GetConfig("Model", "qwen3.5-plus"),
                     Endpoint = GetConfig("Endpoint", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
-                    SudoPassword = GetConfig("SudoPassword", "")
+                    SudoPassword = GetConfig("SudoPassword", ""),
+                    WebPort = int.TryParse(GetConfig("WebPort", "5050"), out var wp) && wp > 0 ? wp : 5050
                 };
                 byte[] buffer = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig));
                 res.ContentType = "application/json";
@@ -1169,12 +1174,19 @@ async Task StartWebManager()
                 using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
                 var body = await reader.ReadToEndAsync();
                 var newCfg = JsonSerializer.Deserialize(body, AppJsonContext.Default.AppConfig);
+                bool portChanged = false;
                 if (newCfg != null)
                 {
+                    int currentPort = int.TryParse(GetConfig("WebPort", "5050"), out var cp) && cp > 0 ? cp : 5050;
+                    if (newCfg.WebPort < 1 || newCfg.WebPort > 65535) newCfg.WebPort = currentPort;
+                    portChanged = newCfg.WebPort != currentPort;
                     File.WriteAllText("appsettings.json", JsonSerializer.Serialize(newCfg, AppJsonContext.Default.AppConfig), Encoding.UTF8);
                     sudoPassword = newCfg.SudoPassword ?? "";
                 }
                 res.StatusCode = 200;
+                res.ContentType = "application/json";
+                var resultBytes = Encoding.UTF8.GetBytes(portChanged ? "{\"status\":\"port_changed\"}" : "{\"status\":\"ok\"}");
+                await res.OutputStream.WriteAsync(resultBytes, 0, resultBytes.Length);
                 res.Close();
             }
             else if (url.AbsolutePath == "/api/tasks" && req.HttpMethod == "GET")
@@ -1781,6 +1793,13 @@ string GetWebUIHtml()
               <input type="password" id="sudoPassword" placeholder="自动执行 sudo 时使用的密码" />
             </div>
           </div>
+
+          <div class="config-row">
+            <div class="form-group">
+              <label>Web 端口 (WebPort)</label>
+              <input type="number" id="webPort" placeholder="5050" min="1" max="65535" />
+            </div>
+          </div>
         </div>
 
         <button class="btn-submit" type="button" onclick="saveConfig()">保存并上传配置</button>
@@ -1890,7 +1909,7 @@ string GetWebUIHtml()
     // QR
     const host = window.location.hostname;
     const targetUrl = (host === 'localhost' || host === '127.0.0.1')
-      ? 'http://{{LAN_IP}}:5050/'
+      ? 'http://{{LAN_IP}}:{{WEB_PORT}}/'
       : window.location.href;
 
     if (typeof QRCode !== 'undefined') {
@@ -1933,15 +1952,22 @@ string GetWebUIHtml()
         document.getElementById('model').value = data.Model || '';
         document.getElementById('endpoint').value = data.Endpoint || '';
         document.getElementById('sudoPassword').value = data.SudoPassword || '';
+        document.getElementById('webPort').value = data.WebPort || 5050;
       } catch {}
     }
 
     async function saveConfig() {
+      const portVal = parseInt(document.getElementById('webPort').value) || 5050;
+      if (portVal < 1 || portVal > 65535) {
+        alert('端口号必须在 1 到 65535 之间');
+        return;
+      }
       const cfg = {
         ApiKey: document.getElementById('apiKey').value,
         Model: document.getElementById('model').value,
         Endpoint: document.getElementById('endpoint').value,
-        SudoPassword: document.getElementById('sudoPassword').value
+        SudoPassword: document.getElementById('sudoPassword').value,
+        WebPort: portVal
       };
 
       const btn = document.querySelector('.btn-submit');
@@ -1958,10 +1984,19 @@ string GetWebUIHtml()
 
         if (!res.ok) throw new Error('Config upload failed');
 
-        if (btn) {
-          btn.style.background = 'var(--pipi-magenta)';
-          btn.innerHTML = '✅ 配置已同步';
-          setTimeout(() => { btn.style.background = ''; btn.innerHTML = originalText; }, 1800);
+        const result = await res.json().catch(() => ({}));
+        if (result.status === 'port_changed') {
+          if (btn) {
+            btn.style.background = 'var(--pipi-cyan)';
+            btn.innerHTML = '✅ 配置已保存，端口变更需重启生效';
+            setTimeout(() => { btn.style.background = ''; btn.innerHTML = originalText; }, 3500);
+          }
+        } else {
+          if (btn) {
+            btn.style.background = 'var(--pipi-magenta)';
+            btn.innerHTML = '✅ 配置已同步';
+            setTimeout(() => { btn.style.background = ''; btn.innerHTML = originalText; }, 1800);
+          }
         }
       } catch (e) {
         if (btn) btn.innerHTML = originalText || '保存并上传配置';
@@ -2163,6 +2198,7 @@ public class AppConfig {
     [JsonPropertyName("Model")] public string Model { get; set; } = "";
     [JsonPropertyName("Endpoint")] public string Endpoint { get; set; } = "";
     [JsonPropertyName("SudoPassword")] public string SudoPassword { get; set; } = "";
+    [JsonPropertyName("WebPort")] public int WebPort { get; set; } = 5050;
 }
 
 public class TaskItem {
