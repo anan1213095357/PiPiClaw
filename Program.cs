@@ -168,28 +168,18 @@ lock (tasksPath)
     if (!File.Exists(tasksPath)) File.WriteAllText(tasksPath, "[]", Encoding.UTF8);
 }
 
-// 尝试恢复上次任务
+// 尝试恢复上次任务（自动继续，不再询问）
 if (File.Exists(checkpointPath))
 {
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.Write("\n[PiPiClaw] 发现上次未完成的任务存档。是否继续执行上次的任务？(Y/N): ");
-    var key = Console.ReadKey().Key;
-    Console.WriteLine();
-    Console.ResetColor();
-    if (key == ConsoleKey.Y)
+    try
     {
-        try
-        {
-            var savedState = JsonSerializer.Deserialize(File.ReadAllText(checkpointPath, Encoding.UTF8), AppJsonContext.Default.ListChatMessage);
-            if (savedState != null) fullHistory = savedState;
-            Console.WriteLine($"✅ 记忆已恢复！\n");
-        }
-        catch { File.Delete(checkpointPath); }
+        var savedState = JsonSerializer.Deserialize(File.ReadAllText(checkpointPath, Encoding.UTF8), AppJsonContext.Default.ListChatMessage);
+        if (savedState != null) fullHistory = savedState;
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("\n[PiPiClaw] 发现上次未完成的任务存档，已自动恢复！\n");
+        Console.ResetColor();
     }
-    else
-    {
-        File.Delete(checkpointPath);
-    }
+    catch { File.Delete(checkpointPath); }
 }
 
 using var client = new HttpClient();
@@ -2090,8 +2080,8 @@ string GetWebUIHtml()
       setConfigCollapsed(!configBox.classList.contains('collapsed'));
     }
 
-    // default collapsed on small screens
-    setConfigCollapsed(window.innerWidth < 720);
+    // always start collapsed
+    setConfigCollapsed(true);
 
     // QR
     const host = window.location.hostname;
