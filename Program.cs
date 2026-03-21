@@ -1131,34 +1131,26 @@ async Task StartWebManager()
                 continue;
             }
 
-            if (req.Url!.AbsolutePath == "/IMG_0868.png")
+            var url = req.Url;
+            if (url == null)
             {
-                string logoPath = Path.Combine(AppContext.BaseDirectory, "IMG_0868.png");
-                if (File.Exists(logoPath))
-                {
-                    var bytes = await File.ReadAllBytesAsync(logoPath);
-                    res.ContentType = "image/png";
-                    res.ContentLength64 = bytes.Length;
-                    await res.OutputStream.WriteAsync(bytes, 0, bytes.Length);
-                }
-                else
-                {
-                    res.StatusCode = 404;
-                }
+                res.StatusCode = 400;
                 res.Close();
                 continue;
             }
 
-            if (req.Url.AbsolutePath == "/")
+            if (url.AbsolutePath == "/")
             {
-                string htmlContent = GetWebUIHtml().Replace("{{LAN_IP}}", GetLocalIpAddress());
+                string htmlContent = GetWebUIHtml()
+                    .Replace("{{LAN_IP}}", GetLocalIpAddress())
+                    .Replace("{{LOGO_DATA_URL}}", GetLogoDataUrl());
                 byte[] buffer = Encoding.UTF8.GetBytes(htmlContent);
                 res.ContentType = "text/html; charset=utf-8";
                 res.ContentLength64 = buffer.Length;
                 await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                 res.Close();
             }
-            else if (req.Url.AbsolutePath == "/api/config" && req.HttpMethod == "GET")
+            else if (url.AbsolutePath == "/api/config" && req.HttpMethod == "GET")
             {
                 var cfg = new AppConfig
                 {
@@ -1172,7 +1164,7 @@ async Task StartWebManager()
                 await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                 res.Close();
             }
-            else if (req.Url.AbsolutePath == "/api/config" && req.HttpMethod == "POST")
+            else if (url.AbsolutePath == "/api/config" && req.HttpMethod == "POST")
             {
                 using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
                 var body = await reader.ReadToEndAsync();
@@ -1185,7 +1177,7 @@ async Task StartWebManager()
                 res.StatusCode = 200;
                 res.Close();
             }
-            else if (req.Url.AbsolutePath == "/api/tasks" && req.HttpMethod == "GET")
+            else if (url.AbsolutePath == "/api/tasks" && req.HttpMethod == "GET")
             {
                 string tasksJson = "[]";
                 lock (tasksPath) {
@@ -1196,7 +1188,7 @@ async Task StartWebManager()
                 await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                 res.Close();
             }
-            else if (req.Url.AbsolutePath == "/api/chat" && req.HttpMethod == "POST")
+            else if (url.AbsolutePath == "/api/chat" && req.HttpMethod == "POST")
             {
                 using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
                 var body = await reader.ReadToEndAsync();
@@ -1234,8 +1226,8 @@ async Task StartWebManager()
 string GetWebUIHtml()
 {
     var html = """
-           <!DOCTYPE html>
-           <html lang="zh-CN">
+            <!DOCTYPE html>
+            <html lang="zh-CN">
            <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -1576,7 +1568,7 @@ string GetWebUIHtml()
                 </div>
 
                 <script>
-                    const LOGO_DATA_URL = "/IMG_0868.png";
+                    const LOGO_DATA_URL = "{{LOGO_DATA_URL}}";
                     const configBox = document.getElementById('configBox');
                     const configBody = document.getElementById('configBody');
                     const configToggle = document.getElementById('configToggle');
@@ -1750,6 +1742,21 @@ string GetWebUIHtml()
     """;
 
     return html;
+}
+
+string GetLogoDataUrl()
+{
+    try
+    {
+        string logoPath = Path.Combine(AppContext.BaseDirectory, "IMG_0868.png");
+        if (File.Exists(logoPath))
+        {
+            var bytes = File.ReadAllBytes(logoPath);
+            return $"data:image/png;base64,{Convert.ToBase64String(bytes)}";
+        }
+    }
+    catch { }
+    return "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 }
 
 // ========================== 14. 通用日志压缩器 ==========================
