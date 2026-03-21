@@ -1477,11 +1477,11 @@ string GetWebUIHtml()
       color:var(--text-main);
       margin:0;
       padding:20px;
-      min-height:100vh;
+      height:100dvh;
       display:flex;
       flex-direction:column;
       align-items:center;
-      overflow-x:hidden;
+      overflow:hidden;
       position:relative;
       text-size-adjust:100%;
       -webkit-text-size-adjust:100%;
@@ -1514,7 +1514,7 @@ string GetWebUIHtml()
       animation:breatheBg 8s infinite alternate ease-in-out;
     }
 
-    .container{width:100%; max-width:1000px; z-index:2; display:flex; flex-direction:column; gap:20px;}
+    .container{width:100%; max-width:1000px; z-index:2; display:flex; flex-direction:column; gap:20px; flex:1; min-height:0;}
 
     .header{display:flex; align-items:center; justify-content:space-between; animation:slideDown .8s ease-out; gap:12px;}
     .header h1{
@@ -1667,9 +1667,11 @@ string GetWebUIHtml()
     .btn-submit:hover{background:var(--pipi-cyan); color:#000; box-shadow:0 0 25px rgba(0,242,254,.6); transform:translateY(-1px);}
     .btn-submit:active{transform:translateY(0);}
 
+    #terminalBox{flex:1; display:flex; flex-direction:column; min-height:0;}
+
     .chat-box{
-      height:55vh;
-      min-height:400px;
+      flex:1;
+      min-height:0;
       overflow-y:auto;
       background:var(--chat-box-bg);
       padding:18px;
@@ -1792,7 +1794,6 @@ string GetWebUIHtml()
     .btn-cancel svg{width:22px;height:22px;fill:currentColor;}
 
     .loader-wrapper{
-      display:none;
       height:30px;
       margin:14px auto 0;
       text-align:center;
@@ -1800,6 +1801,7 @@ string GetWebUIHtml()
       font-size:.8em;
       text-transform:uppercase;
       letter-spacing:2px;
+      visibility:hidden;
     }
     .loader-bars{display:inline-flex;gap:4px;align-items:center;margin-right:10px;}
     .loader-bars span{width:4px;height:12px;background:var(--pipi-cyan);animation:barDance 1s infinite;border-radius:2px;}
@@ -1827,7 +1829,7 @@ string GetWebUIHtml()
       .header h1{font-size:1.4em; letter-spacing:1px;}
       .header-btn{width:38px; height:38px; font-size:1em;}
       .box{padding:15px;}
-      .chat-box{height:58vh; padding:12px;}
+      .chat-box{padding:12px;}
       #qrcode-container{display:none;}
       .btn-wrapper{width:60px;}
       textarea{padding:10px; font-size:.95em;}
@@ -1932,7 +1934,7 @@ string GetWebUIHtml()
       </div>
     </div>
 
-    <div class="box" style="animation-delay:.2s;">
+    <div class="box" id="terminalBox" style="animation-delay:.2s;">
       <h2><span style="color:var(--pipi-magenta);">⌨️</span> 交互终端 (Terminal)</h2>
 
       <div class="chat-box" id="chatBox">
@@ -2164,7 +2166,7 @@ string GetWebUIHtml()
     function setBusy(busy) {
       document.getElementById('sendWrapper').style.display = busy ? 'none' : 'block';
       document.getElementById('cancelWrapper').style.display = busy ? 'block' : 'none';
-      document.getElementById('loading').style.display = busy ? 'block' : 'none';
+      document.getElementById('loading').style.visibility = busy ? 'visible' : 'hidden';
     }
 
     async function cancelTask() {
