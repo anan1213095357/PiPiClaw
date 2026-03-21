@@ -84,7 +84,8 @@ var toolsDoc = JsonDocument.Parse("""
     { "type": "function", "function": { "name": "add_scheduled_task", "description": "添加定时或延时任务。系统底层的C#引擎会绝对接管时间调度，绝不能在任务执行时由AI去动态补加下一次任务。", "parameters": { "type": "object", "properties": { "execute_at": { "type": "string", "description": "首次执行时间，严格遵循 ISO 8601 格式，例如 '2026-03-20T14:30:00+08:00'" }, "user_intent": { "type": "string", "description": "到达时间时，大模型需要执行的具体任务要求和背景" }, "interval_minutes": { "type": "integer", "description": "可选。如果是周期性任务，请设置此周期间隔（分钟数）。例如每天执行则设为 1440。如果不填或为 0，则仅执行一次。系统会在底层自动无限循环，无需AI干预。" } }, "required": ["execute_at", "user_intent"] } } },
     { "type": "function", "function": { "name": "remove_scheduled_task", "description": "删除指定的定时或延时任务。", "parameters": { "type": "object", "properties": { "task_id": { "type": "string", "description": "要删除的任务ID（从任务列表中获取）" } }, "required": ["task_id"] } } },
     { "type": "function", "function": { "name": "search_skill", "description": "当用户要求安装、查找或添加某个特定技能时执行此功能。根据关键词从 Skill-hub 搜索技能。注意：当用户说要“自我构建”或“编写”技能时，不要执行此功能。", "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "用户想要搜索或安装的技能关键词，例如 'calendar', 'weather' 等" } }, "required": ["query"] } } },
-    { "type": "function", "function": { "name": "install_skill", "description": "安装 单个 Skill-hub 或者 从第三方的技能，并根据包含的 MD 文件自动了解对接方式。", "parameters": { "type": "object", "properties": { "slug": { "type": "string", "description": "技能列表中的slug字段只需传入这个字段即可" } }, "required": ["slug"] } } }
+    { "type": "function", "function": { "name": "install_skill", "description": "安装 单个 Skill-hub 或者 从第三方的技能，并根据包含的 MD 文件自动了解对接方式。", "parameters": { "type": "object", "properties": { "slug": { "type": "string", "description": "技能列表中的slug字段只需传入这个字段即可" } }, "required": ["slug"] } } },
+    { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } }
 ]
 """);
 
@@ -196,6 +197,7 @@ client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bear
 var agentLock = new SemaphoreSlim(1, 1);
 CancellationTokenSource? currentTaskCts = null;
 const string CancelledMsg = "\n[任务已取消]";
+bool selfUpdateRequested = false;
 
 // ========================== 6. 启动后台服务 (调度 + WebUI) ==========================
 _ = Task.Run(ScheduleLoop);
@@ -549,6 +551,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                             break;
                         }
                         case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
+                        case "self_update": result = await SelfUpdate(); break;
                         case "execute_command": result = RunCmd(GetStrProp(tempArgs, "command"), GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
                         default:
                             result = fnName switch
@@ -593,6 +596,16 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("\n✅ [生命周期] 本次任务上下文已全自动清理！PiPiClaw 已就绪，随时接收新任务。");
             Console.ResetColor();
+        }
+
+        if (selfUpdateRequested)
+        {
+            selfUpdateRequested = false;
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("[自动更新] 皮皮虾即将退出并由更新脚本完成替换重启，再见！");
+            Console.ResetColor();
+            await Task.Delay(1500);
+            Environment.Exit(0);
         }
         
         if (isScheduledEvent) 
@@ -1116,6 +1129,75 @@ async Task DownloadFileAsync(string url, string destinationPath)
     using var stream = await response.Content.ReadAsStreamAsync();
     using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
     await stream.CopyToAsync(fileStream);
+}
+
+// ========================== 14. 自动更新逻辑 ==========================
+async Task<string> SelfUpdate()
+{
+    try
+    {
+        bool isWin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        string exeName = isWin ? "PiPiClaw.exe" : "PiPiClaw";
+        string downloadUrl = $"https://github.com/anan1213095357/PiPiClaw/releases/download/latest/{exeName}";
+
+        string? currentExePath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(currentExePath))
+            currentExePath = Process.GetCurrentProcess().MainModule?.FileName;
+        if (string.IsNullOrEmpty(currentExePath))
+            return "[更新失败] 无法获取当前程序路径";
+
+        string tempPath = Path.Combine(Path.GetTempPath(), $"PiPiClaw_new_{Guid.NewGuid():N}{(isWin ? ".exe" : "")}");
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"[自动更新] 正在从 GitHub 下载最新版本...");
+        Console.WriteLine($"[自动更新] 下载地址: {downloadUrl}");
+        Console.ResetColor();
+
+        using var updateClient = new HttpClient();
+        updateClient.DefaultRequestHeaders.Add("User-Agent", "PiPiClaw-Updater/1.0");
+        using var dlResponse = await updateClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+        dlResponse.EnsureSuccessStatusCode();
+        using (var dlStream = await dlResponse.Content.ReadAsStreamAsync())
+        using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            await dlStream.CopyToAsync(fs);
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"[自动更新] 下载完成！正在准备重启脚本...");
+        Console.ResetColor();
+
+        if (isWin)
+        {
+            string scriptPath = Path.Combine(Path.GetTempPath(), $"pi_update_{Guid.NewGuid():N}.bat");
+            File.WriteAllText(scriptPath,
+                $"@echo off\r\n" +
+                $"timeout /t 2 /nobreak >nul\r\n" +
+                $"copy /y \"{tempPath}\" \"{currentExePath}\"\r\n" +
+                $"start \"\" \"{currentExePath}\"\r\n" +
+                $"del \"{tempPath}\"\r\n" +
+                $"del \"%~f0\"\r\n", Encoding.ASCII);
+            Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\"") { CreateNoWindow = true, UseShellExecute = false });
+        }
+        else
+        {
+            string scriptPath = Path.Combine(Path.GetTempPath(), $"pi_update_{Guid.NewGuid():N}.sh");
+            File.WriteAllText(scriptPath,
+                $"#!/bin/sh\n" +
+                $"sleep 2\n" +
+                $"cp \"{tempPath}\" \"{currentExePath}\"\n" +
+                $"chmod +x \"{currentExePath}\"\n" +
+                $"rm -f \"{tempPath}\"\n" +
+                $"\"{currentExePath}\" &\n" +
+                $"rm -f \"$0\"\n", new UTF8Encoding(false));
+            Process.Start(new ProcessStartInfo("/bin/sh", scriptPath) { CreateNoWindow = true, UseShellExecute = false });
+        }
+
+        selfUpdateRequested = true;
+        return "[自动更新] 下载成功！更新脚本已启动，皮皮虾即将重启，稍后自动恢复运行。";
+    }
+    catch (Exception ex)
+    {
+        return $"[更新失败] {ex.Message}";
+    }
 }
 
 async Task StartWebManager()
