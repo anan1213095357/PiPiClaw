@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
+using System.Formats.Tar;
 using System.Net;            
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
@@ -1137,8 +1139,22 @@ async Task<string> SelfUpdate()
     try
     {
         bool isWin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        bool isMac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+
+        string osName = isWin ? "win" : isMac ? "osx" : "linux";
+        string archName = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.X64   => "x64",
+            Architecture.X86   => "x86",
+            Architecture.Arm64 => "arm64",
+            Architecture.Arm   => "arm",
+            _                  => "x64"
+        };
+        string rid = $"{osName}-{archName}";
+        string ext = isWin ? "zip" : "tar.gz";
+        string archiveName = $"PiPiClaw_{rid}.{ext}";
         string exeName = isWin ? "PiPiClaw.exe" : "PiPiClaw";
-        string downloadUrl = $"https://github.com/anan1213095357/PiPiClaw/releases/download/latest/{exeName}";
+        string downloadUrl = $"https://github.com/anan1213095357/PiPiClaw/releases/download/latest/{archiveName}";
 
         string? currentExePath = Environment.ProcessPath;
         if (string.IsNullOrEmpty(currentExePath))
@@ -1146,11 +1162,14 @@ async Task<string> SelfUpdate()
         if (string.IsNullOrEmpty(currentExePath))
             return "[更新失败] 无法获取当前程序路径";
 
-        string tempPath = Path.Combine(Path.GetTempPath(), $"PiPiClaw_new_{Guid.NewGuid():N}{(isWin ? ".exe" : "")}");
+        string tempDir = Path.Combine(Path.GetTempPath(), $"PiPiClaw_update_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        string archivePath = Path.Combine(tempDir, archiveName);
+        string tempExePath = Path.Combine(tempDir, exeName);
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine($"[自动更新] 正在从 GitHub 下载最新版本...");
-        Console.WriteLine($"[自动更新] 下载地址: {downloadUrl}");
+        Console.WriteLine($"[自动更新] 平台: {rid}，下载地址: {downloadUrl}");
         Console.ResetColor();
 
         using var updateClient = new HttpClient();
@@ -1158,8 +1177,35 @@ async Task<string> SelfUpdate()
         using var dlResponse = await updateClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
         dlResponse.EnsureSuccessStatusCode();
         using (var dlStream = await dlResponse.Content.ReadAsStreamAsync())
-        using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var fs = new FileStream(archivePath, FileMode.Create, FileAccess.Write, FileShare.None))
             await dlStream.CopyToAsync(fs);
+
+        // Extract the executable from the downloaded archive
+        if (isWin)
+        {
+            ZipFile.ExtractToDirectory(archivePath, tempDir, overwriteFiles: true);
+        }
+        else
+        {
+            using var archiveFs = File.OpenRead(archivePath);
+            using var gzStream = new GZipStream(archiveFs, CompressionMode.Decompress);
+            using var tarReader = new TarReader(gzStream);
+            TarEntry? entry;
+            while ((entry = tarReader.GetNextEntry()) != null)
+            {
+                if (Path.GetFileName(entry.Name) == exeName && !entry.Name.Contains('/'))
+                {
+                    entry.ExtractToFile(tempExePath, overwrite: true);
+                    break;
+                }
+            }
+        }
+
+        if (!File.Exists(tempExePath))
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+            return $"[更新失败] 在压缩包中未找到可执行文件 {exeName}";
+        }
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"[自动更新] 下载完成！正在准备重启脚本...");
@@ -1171,9 +1217,9 @@ async Task<string> SelfUpdate()
             File.WriteAllText(scriptPath,
                 $"@echo off\r\n" +
                 $"timeout /t 2 /nobreak >nul\r\n" +
-                $"copy /y \"{tempPath}\" \"{currentExePath}\"\r\n" +
+                $"copy /y \"{tempExePath}\" \"{currentExePath}\"\r\n" +
                 $"start \"\" \"{currentExePath}\"\r\n" +
-                $"del \"{tempPath}\"\r\n" +
+                $"rd /s /q \"{tempDir}\"\r\n" +
                 $"del \"%~f0\"\r\n", Encoding.ASCII);
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\"") { CreateNoWindow = true, UseShellExecute = false });
         }
@@ -1183,9 +1229,9 @@ async Task<string> SelfUpdate()
             File.WriteAllText(scriptPath,
                 $"#!/bin/sh\n" +
                 $"sleep 2\n" +
-                $"cp \"{tempPath}\" \"{currentExePath}\"\n" +
+                $"cp \"{tempExePath}\" \"{currentExePath}\"\n" +
                 $"chmod +x \"{currentExePath}\"\n" +
-                $"rm -f \"{tempPath}\"\n" +
+                $"rm -rf \"{tempDir}\"\n" +
                 $"\"{currentExePath}\" &\n" +
                 $"rm -f \"$0\"\n", new UTF8Encoding(false));
             Process.Start(new ProcessStartInfo("/bin/sh", scriptPath) { CreateNoWindow = true, UseShellExecute = false });
