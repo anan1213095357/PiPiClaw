@@ -1221,7 +1221,6 @@ async Task StartWebManager()
     }
 }
 
-
 // ========================== 15. HTML 前端重构区域 ==========================
 string GetWebUIHtml()
 {
@@ -1275,6 +1274,11 @@ string GetWebUIHtml()
       
       --cmd-bg: rgba(0,242,254,0.06);
       --cmd-hover-bg: rgba(0,242,254,0.15);
+
+      /* 滚动条深色变量 */
+      --sb-track: rgba(0, 0, 0, 0.3);
+      --sb-thumb: rgba(0, 242, 254, 0.3);
+      --sb-thumb-hover: rgba(0, 242, 254, 0.7);
     }
 
     /* === 浅色主题 (Light Theme) === */
@@ -1309,6 +1313,34 @@ string GetWebUIHtml()
       
       --cmd-bg: rgba(0, 119, 182, 0.06);
       --cmd-hover-bg: rgba(0, 119, 182, 0.15);
+
+      /* 滚动条浅色变量 */
+      --sb-track: rgba(0, 0, 0, 0.05);
+      --sb-thumb: rgba(0, 119, 182, 0.4);
+      --sb-thumb-hover: rgba(0, 119, 182, 0.8);
+    }
+
+    /* === 全局滚动条美化 === */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--sb-track);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--sb-thumb);
+      border-radius: 4px;
+      transition: background 0.3s ease;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--sb-thumb-hover);
+    }
+    /* 兼容 Firefox */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--sb-thumb) var(--sb-track);
     }
 
     *{box-sizing:border-box}
