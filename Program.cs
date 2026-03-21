@@ -194,6 +194,8 @@ client.Timeout = TimeSpan.FromMinutes(10);
 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
 var agentLock = new SemaphoreSlim(1, 1);
+CancellationTokenSource? currentTaskCts = null;
+const string CancelledMsg = "\n[任务已取消]";
 
 // ========================== 6. 启动后台服务 (调度 + WebUI) ==========================
 _ = Task.Run(ScheduleLoop);
@@ -383,6 +385,8 @@ return;
 async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, Action<string, string>? onUpdate = null)
 {
     await agentLock.WaitAsync();
+    using var taskCts = new CancellationTokenSource();
+    currentTaskCts = taskCts;
     string finalAIResponse = "";
     try
     {
@@ -457,10 +461,20 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             var content = new StringContent(JsonSerializer.Serialize(payload, AppJsonContext.Default.LlmRequest), Encoding.UTF8, "application/json");
             
             HttpResponseMessage res;
+            string responseString;
             try 
             { 
-                res = await client.PostAsync(GetConfig("Endpoint", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"), content); 
+                res = await client.PostAsync(GetConfig("Endpoint", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"), content, taskCts.Token); 
                 res.EnsureSuccessStatusCode();
+                responseString = await res.Content.ReadAsStringAsync(taskCts.Token);
+            }
+            catch(OperationCanceledException)
+            {
+                cts.Cancel(); await animTask;
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine(CancelledMsg); Console.ResetColor();
+                onUpdate?.Invoke("final", CancelledMsg);
+                return CancelledMsg;
             }
             catch(Exception ex) 
             { 
@@ -471,8 +485,6 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 onUpdate?.Invoke("final", err);
                 return err; 
             }
-            
-            var responseString = await res.Content.ReadAsStringAsync();
             var msg = JsonSerializer.Deserialize(responseString, AppJsonContext.Default.LlmResponse)?.Choices?.FirstOrDefault()?.Message;
             
             cts.Cancel(); await animTask;
@@ -537,10 +549,10 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                             break;
                         }
                         case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
+                        case "execute_command": result = RunCmd(GetStrProp(tempArgs, "command"), GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
                         default:
                             result = fnName switch
                             {
-                                "execute_command" => RunCmd(GetStrProp(tempArgs, "command"), GetBoolProp(tempArgs, "is_background")),
                                 "read_file" => ReadFile(GetStrProp(tempArgs, "file_path")),
                                 "write_file" => WriteFile(GetStrProp(tempArgs, "file_path"), GetStrProp(tempArgs, "content"), GetStrProp(tempArgs, "old_content")),
                                 "read_local_image" => ReadImg(GetStrProp(tempArgs, "file_path")),
@@ -593,6 +605,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
     }
     finally
     {
+        currentTaskCts = null;
         agentLock.Release(); 
     }
     return finalAIResponse;
@@ -762,7 +775,7 @@ string ReadPasswordHidden()
     return pwd.ToString();
 }
 
-string RunCmd(string? cmd, bool isBackground = false)
+string RunCmd(string? cmd, bool isBackground = false, CancellationToken ct = default)
 {
     if (string.IsNullOrEmpty(cmd)) return "[执行失败] 命令为空";
     var isWin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -805,15 +818,20 @@ string RunCmd(string? cmd, bool isBackground = false)
     Console.WriteLine($"[{(isBackground ? "后台异步执行中" : "同步执行中")}] {cmd}");
     Console.ResetColor();
 
+    // 在 Windows 上，子进程的 cmd.exe 默认使用系统代码页（如 GBK），
+    // 通过在命令前注入 chcp 65001 强制子进程也切换到 UTF-8，避免乱码。
+    var shellArg = isWin ? $"/c chcp 65001 >nul 2>&1 & {cmd}" : $"-c \"{cmd}\"";
+    var shellExe = isWin ? "cmd.exe" : "/bin/bash";
+    var consoleEncoding = new UTF8Encoding(false);
+
     if (isBackground)
     {
         // ================= 后台非阻塞模式 =================
         // 丢入 Task.Run 剥离出主线程，大模型不会被卡死
         Task.Run(() =>
         {
-            var consoleEncoding = new UTF8Encoding(false);
             using var p = new Process();
-            p.StartInfo = new ProcessStartInfo(isWin ? "cmd.exe" : "/bin/bash", isWin ? $"/c {cmd}" : $"-c \"{cmd}\"")
+            p.StartInfo = new ProcessStartInfo(shellExe, shellArg)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -838,10 +856,9 @@ string RunCmd(string? cmd, bool isBackground = false)
     }
     else
     {
-        // ================= 前台阻塞模式（原逻辑） =================
-        var consoleEncoding = new UTF8Encoding(false);
+        // ================= 前台阻塞模式 =================
         using var p = new Process();
-        p.StartInfo = new ProcessStartInfo(isWin ? "cmd.exe" : "/bin/bash", isWin ? $"/c {cmd}" : $"-c \"{cmd}\"")
+        p.StartInfo = new ProcessStartInfo(shellExe, shellArg)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -858,7 +875,14 @@ string RunCmd(string? cmd, bool isBackground = false)
         p.OutputDataReceived += (sender, e) => { if (e.Data == null) return; Console.WriteLine(e.Data); outputBuilder.AppendLine(e.Data); };
         p.ErrorDataReceived += (sender, e) => { if (e.Data == null) return; Console.ForegroundColor = ConsoleColor.DarkYellow; Console.WriteLine(e.Data); Console.ResetColor(); errorBuilder.AppendLine(e.Data); };
         
-        try { p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine(); p.WaitForExit(); } 
+        try
+        {
+            p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine();
+            // 注册取消回调：取消时终止子进程
+            using (ct.Register(() => { try { p.Kill(true); } catch { } }))
+                p.WaitForExit();
+            if (ct.IsCancellationRequested) return CancelledMsg;
+        }
         catch (Exception ex) { return $"[执行异常] {ex.Message}"; }
         finally { if (!string.IsNullOrEmpty(askPassPath) && File.Exists(askPassPath)) try { File.Delete(askPassPath); } catch { } }
         
@@ -1198,6 +1222,15 @@ async Task StartWebManager()
                 byte[] buffer = Encoding.UTF8.GetBytes(tasksJson);
                 res.ContentType = "application/json";
                 await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                res.Close();
+            }
+            else if (url.AbsolutePath == "/api/cancel" && req.HttpMethod == "POST")
+            {
+                currentTaskCts?.Cancel();
+                res.StatusCode = 200;
+                res.ContentType = "application/json";
+                var cancelBytes = Encoding.UTF8.GetBytes("{\"status\":\"cancelled\"}");
+                await res.OutputStream.WriteAsync(cancelBytes, 0, cancelBytes.Length);
                 res.Close();
             }
             else if (url.AbsolutePath == "/api/chat" && req.HttpMethod == "POST")
@@ -1664,6 +1697,22 @@ string GetWebUIHtml()
     .btn-send:hover{transform:translateY(-2px) scale(1.03); box-shadow:0 10px 25px rgba(255,0,127,.35);}
     .btn-send svg{width:24px;height:24px;fill:currentColor;}
 
+    .btn-cancel{
+      width:100%; height:100%;
+      border-radius:12px;
+      border:none;
+      background:linear-gradient(135deg,var(--pipi-magenta),#800020);
+      color:#fff;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      transition:transform .2s, box-shadow .2s;
+      box-shadow:0 5px 15px rgba(255,0,127,.3), inset 0 2px 5px rgba(255,255,255,.3);
+    }
+    .btn-cancel:hover{transform:translateY(-2px) scale(1.03); box-shadow:0 10px 25px rgba(255,0,127,.5);}
+    .btn-cancel svg{width:22px;height:22px;fill:currentColor;}
+
     .loader-wrapper{
       display:none;
       margin:14px auto 0;
@@ -1840,9 +1889,14 @@ string GetWebUIHtml()
 
       <div class="input-area">
         <textarea id="chatInput" placeholder="输入任务指令... (按 Enter 发送)"></textarea>
-        <div class="btn-wrapper">
+        <div class="btn-wrapper" id="sendWrapper">
           <button class="btn-send" type="button" onclick="sendMsg()" aria-label="Send">
             <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>
+          </button>
+        </div>
+        <div class="btn-wrapper" id="cancelWrapper" style="display:none;">
+          <button class="btn-cancel" type="button" onclick="cancelTask()" aria-label="Cancel">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </button>
         </div>
       </div>
@@ -2028,6 +2082,20 @@ string GetWebUIHtml()
     }
     setInterval(fetchTasks, 1000);
 
+    let currentAbortController = null;
+
+    function setBusy(busy) {
+      document.getElementById('sendWrapper').style.display = busy ? 'none' : 'block';
+      document.getElementById('cancelWrapper').style.display = busy ? 'block' : 'none';
+      document.getElementById('loading').style.display = busy ? 'block' : 'none';
+    }
+
+    async function cancelTask() {
+      try { currentAbortController?.abort(); } catch {}
+      try { await fetch('/api/cancel', { method: 'POST' }); } catch(e) { console.warn('[cancelTask] /api/cancel failed:', e); }
+      setBusy(false);
+    }
+
     async function sendMsg() {
       const input = document.getElementById('chatInput');
       const text = (input.value || '').trim();
@@ -2038,22 +2106,22 @@ string GetWebUIHtml()
       input.value = '';
       chatBox.scrollTop = chatBox.scrollHeight;
 
-      document.getElementById('loading').style.display = 'block';
+      setBusy(true);
 
       const uniqueId = 'ai_' + Date.now();
       chatBox.innerHTML += `<div class="msg ai"><div class="msg-header">皮皮虾 // 工具</div><div class="msg-content" id="${uniqueId}"></div></div>`;
       const contentBox = document.getElementById(uniqueId);
 
       let currentTerminalBox = null;
+      currentAbortController = new AbortController();
 
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
+          body: JSON.stringify({ message: text }),
+          signal: currentAbortController.signal
         });
-
-        document.getElementById('loading').style.display = 'none';
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -2102,8 +2170,16 @@ string GetWebUIHtml()
             chatBox.scrollTop = chatBox.scrollHeight;
           }
         }
-      } catch {
-        document.getElementById('loading').style.display = 'none';
+      } catch (e) {
+        // 'AbortError' is the expected error name when fetch is cancelled via AbortController
+        if (e?.name !== 'AbortError') {
+          const errWrap = document.createElement('div');
+          errWrap.style.cssText = 'margin-top:8px; color:var(--pipi-magenta); font-size:0.85em;';
+          errWrap.textContent = '[连接中断]';
+          contentBox.appendChild(errWrap);
+        }
+      } finally {
+        setBusy(false);
       }
     }
 
