@@ -22,3 +22,6 @@ bld/
 
 # Visual Studio cache/options
 .vs/
+
+# Local configuration (may contain secrets)
+appsettings.json
