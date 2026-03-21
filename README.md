@@ -1,4 +1,4 @@
-# <div align="left" style="display: flex; align-items: center; line-height: 1.2;"><span style="font-size: 32px; font-weight: bold;">🦐 PiPiClaw - 皮皮虾智能运维自动化 Agent</span> </div>
+# <div align="left" style="display: flex; align-items: center; line-height: 1.2;"><span style="font-size: 32px; font-weight: bold;">🦐 PiPiClaw - 皮皮虾智能机器人 </span> </div>
 
 <div align="center">
 
@@ -11,7 +11,7 @@
 ![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
 ![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
-**🦐 让 AI 成为你的运维指挥官 | 命令行里的智能自动化专家**
+**🦐 让 AI 成为你的智能管家**
 
 **🌐 语言切换 | Language:** [中文](README.md) | [English](README_EN.md)
 
