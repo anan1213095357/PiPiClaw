@@ -132,7 +132,7 @@ Console.WriteLine(@"
 ");
 Console.ForegroundColor = ConsoleColor.Green;
 Console.WriteLine($"皮皮虾已就绪。当前模型：[ {GetConfig("Model", "qwen3.5-plus")} ]");
-Console.WriteLine("PiPiClaw | 跨平台自动化运维框架 (带持久化调度) \n");
+Console.WriteLine("PiPiClaw | 跨平台全能智能体 · Skill-Hub 10000+ 技能即刻可用\n");
 
 Console.ResetColor();
 Console.WriteLine("【简介与食用指南】");
@@ -404,8 +404,9 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             }
 
             var systemPromptText = $"""
-                                    你是一个高级运维自动化 Agent，代号 PiPiClaw (皮皮虾)。当前系统：{RuntimeInformation.OSDescription}。当前时间是 {DateTimeOffset.Now:yyyy-MM-ddTHH:mm:sszzz}。
+                                    你是一个全能智能 Agent，代号 PiPiClaw (皮皮虾)。当前系统：{RuntimeInformation.OSDescription}。当前时间是 {DateTimeOffset.Now:yyyy-MM-ddTHH:mm:sszzz}。
                                     {sudoInstruction}
+                                    你的使命：以本地优先、安全可审计的方式完成用户提出的任何任务，不限于运维/开发/数据/知识检索。你可随时通过 Skill-Hub 搜索或安装一万+ 生态技能扩展能力。
                                     【记忆管理架构】：
                                     1. 为节省Token，你的短时记忆默认只保留最近几次的对话记录。
                                     2. 当任务彻底完成时调用 finish_task 清理环境。
@@ -1130,7 +1131,25 @@ async Task StartWebManager()
                 continue;
             }
 
-            if (req.Url!.AbsolutePath == "/")
+            if (req.Url!.AbsolutePath == "/IMG_0868.png")
+            {
+                string logoPath = Path.Combine(AppContext.BaseDirectory, "IMG_0868.png");
+                if (File.Exists(logoPath))
+                {
+                    var bytes = await File.ReadAllBytesAsync(logoPath);
+                    res.ContentType = "image/png";
+                    res.ContentLength64 = bytes.Length;
+                    await res.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+                }
+                else
+                {
+                    res.StatusCode = 404;
+                }
+                res.Close();
+                continue;
+            }
+
+            if (req.Url.AbsolutePath == "/")
             {
                 string htmlContent = GetWebUIHtml().Replace("{{LAN_IP}}", GetLocalIpAddress());
                 byte[] buffer = Encoding.UTF8.GetBytes(htmlContent);
@@ -1219,7 +1238,7 @@ string GetWebUIHtml()
            <head>
                <meta charset="UTF-8">
                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-               <title>🦐 PIPICLAW C&C TERMINAL v3.0</title>
+               <title>PiPiClaw // SkillHub Ready C&C Terminal v3.0</title>
                <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
                <style>
                    /* ================= 核心变量与极暗底色 ================= */
@@ -1236,9 +1255,9 @@ string GetWebUIHtml()
                    }
 
                    /* ================= 全局动画背景 ================= */
-                   body { 
-                       font-family: var(--font-mono); 
-                       background-color: var(--bg-depth); 
+                    body { 
+                        font-family: var(--font-mono); 
+                        background-color: var(--bg-depth); 
                        color: var(--text-main); 
                        margin: 0; padding: 20px; 
                        display: flex; flex-direction: column; align-items: center; 
@@ -1263,14 +1282,15 @@ string GetWebUIHtml()
 
                    /* ================= 头部动画 ================= */
                    .header { text-align: center; margin-bottom: 10px; position: relative; animation: slideDown 0.8s ease-out; }
-                   .header h1 { 
-                       font-size: 3em; font-weight: 900; margin: 0; text-transform: uppercase; letter-spacing: 4px;
-                       background: linear-gradient(90deg, var(--pipi-cyan), #fff, var(--pipi-magenta), var(--pipi-cyan));
-                       background-size: 200% auto;
-                       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-                       filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.2));
-                       animation: shineText 3s linear infinite, glitch 4s infinite;
-                   }
+                    .header h1 { 
+                        font-size: 3em; font-weight: 900; margin: 0; text-transform: uppercase; letter-spacing: 4px;
+                        background: linear-gradient(90deg, var(--pipi-cyan), #fff, var(--pipi-magenta), var(--pipi-cyan));
+                        background-size: 200% auto;
+                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                        filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.2));
+                        animation: shineText 3s linear infinite, glitch 4s infinite;
+                        display: inline-flex; align-items: center; gap: 12px;
+                    }
                    .header p { color: var(--text-muted); font-size: 0.9em; margin-top: 5px; opacity: 0.8; letter-spacing: 1px; }
                    
                    /* ================= 卡片悬浮与进场 ================= */
@@ -1288,8 +1308,12 @@ string GetWebUIHtml()
                        animation: scanLight 4s infinite linear;
                    }
 
-                   h2 { margin-top: 0; color: #fff; font-size: 1.1em; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
-                   h2::before { content: ''; width: 6px; height: 18px; background: var(--pipi-cyan); box-shadow: 0 0 10px var(--pipi-cyan); border-radius: 3px; }
+                    h2 { margin-top: 0; color: #fff; font-size: 1.1em; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+                    h2::before { content: ''; width: 6px; height: 18px; background: var(--pipi-cyan); box-shadow: 0 0 10px var(--pipi-cyan); border-radius: 3px; }
+
+                    .logo-heading { display: inline-flex; align-items: center; gap: 12px; justify-content: center; }
+                    .logo-mark { width: 42px; height: 42px; object-fit: contain; vertical-align: middle; filter: drop-shadow(0 0 8px rgba(0, 242, 254, 0.25)); }
+                    .logo-badge { width: 22px; height: 22px; object-fit: contain; vertical-align: middle; }
 
                    /* ================= 输入框动效 ================= */
                    .config-grid { display: grid; grid-template-columns: 1fr; gap: 15px; }
@@ -1453,11 +1477,11 @@ string GetWebUIHtml()
                    <span>手机扫码打开这个界面</span>
                </div>
 
-               <div class="container">
-                   <div class="header">
-                       <h1>PiPiClaw</h1>
-                       <p>Hydra-class Automation Agent // Terminal v3.0</p>
-                   </div>
+                <div class="container">
+                    <div class="header">
+                        <h1><img class="logo-mark" src="/IMG_0868.png" alt="PiPiClaw Logo"> <span>PiPiClaw</span></h1>
+                        <p>SkillHub-ready general agent // Terminal v3.0</p>
+                    </div>
 
                    <div class="box" style="animation-delay: 0.1s;">
                        <h2><span style="color: var(--pipi-cyan);">🛰️</span> 核心链路配置 (Config)</h2>
@@ -1477,10 +1501,10 @@ string GetWebUIHtml()
                                    <label>端点地址 (Endpoint)</label>
                                    <input type="text" id="endpoint" placeholder="https://...">
                                </div>
-                               <div class="form-group">
-                                   <label>运维密码 (SudoPassword)</label>
-                                   <input type="password" id="sudoPassword" placeholder="自动执行 sudo 时使用的密码">
-                               </div>
+                                <div class="form-group">
+                                    <label>提权密码 (SudoPassword)</label>
+                                    <input type="password" id="sudoPassword" placeholder="自动执行 sudo 时使用的密码">
+                                </div>
                            </div>
                        </div>
                        <button class="btn-submit" onclick="saveConfig()">保存并上传配置</button>
@@ -1490,13 +1514,13 @@ string GetWebUIHtml()
                        <h2><span style="color:var(--pipi-magenta);">⌨️</span> 交互终端 (Terminal)</h2>
                        <div class="chat-container">
                            <div class="chat-box" id="chatBox">
-                               <div class="msg ai">
-                                   <div class="msg-header"><span>🦐</span> 皮皮虾 // 系统</div>
-                                   <div class="msg-content">神经链接已建立。等待指令……<br><br>
-                                   <div style="color: var(--pipi-cyan); font-weight: bold; margin-bottom: 8px;">【简介与食用指南】</div>
-                                   <div>
-            这是一个能够全自动执行终端命令、读写文件、规划任务的 AI 自动化终端。<br>
-            只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令来帮你办事。<br><br>
+                                <div class="msg ai">
+                                    <div class="msg-header"><img src="/IMG_0868.png" alt="PiPiClaw Logo" class="logo-badge" /> 皮皮虾 // 系统</div>
+                                    <div class="msg-content">神经链接已建立。等待指令……<br><br>
+                                    <div style="color: var(--pipi-cyan); font-weight: bold; margin-bottom: 8px;">【简介与食用指南】</div>
+                                    <div>
+            这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>
+            只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br>
             💡 试试直接粘贴以下命令 (傻瓜式案例)：<br>
             <span style="color: var(--text-muted); line-height: 1.6;">
             1. "帮我扫描一下当前目录，看有没有 C# 相关的源码文件"<br>

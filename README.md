@@ -1,4 +1,4 @@
-# <div align="left" style="display: flex; align-items: center; line-height: 1.2;"><span style="font-size: 32px; font-weight: bold;">🦐 PiPiClaw - 皮皮虾智能机器人 </span> </div>
+# <div align="left" style="display: flex; align-items: center; line-height: 1.2; gap: 8px;"><img src="./IMG_0868.png" alt="PiPiClaw Logo" width="40" /> <span style="font-size: 32px; font-weight: bold;">PiPiClaw - 皮皮虾智能机器人 </span> </div>
 
 <div align="center">
 
@@ -11,19 +11,22 @@
 ![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
 ![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
-**🦐 让 AI 成为你的智能管家**
+**让 AI 成为你的全能智能管家，原生对接 Skill-Hub 一万+ 生态技能**
 
 **🌐 语言切换 | Language:** [中文](README.md) | [English](README_EN.md)
 
 </div>
 
-> 🏆 **打包后仅 ~2 MB** —— 全网最小的 AI 运维「龙虾」，单文件发布、秒级启动，插U盘就能跑。
+> 🏆 **打包后仅 ~2 MB** —— 全网最小的本地 AI 智能体，单文件发布、秒级启动，插U盘就能跑。
 
 ---
 
 ## 📖 项目简介
 
 **PiPiClaw (皮皮虾)** 是一款运行在你自己的设备上的个人 AI 智能管家，基于阿里云通义千问大语言模型，主打本地、轻量、随取随用。通过终端和内置 Web 控制台，它能在 Windows、macOS、Linux 上陪伴你的工作流，实时渲染由你控制的命令与任务画面——网关只是管理入口，真正执行的是在你机器上常驻的助手本体。
+
+- 不止运维：它是全能的本地智能体，能编排开发、自动化、数据处理、信息检索等任意任务。
+- 原生对接 Skill-Hub，一键搜索并安装 10,000+ 生态技能，无限扩展能力版图。
 
 如果你想要一个像本地助手一样、速度快、始终在线的AI 助手，PiPiClaw 正好契合这一需求。
 
@@ -252,7 +255,7 @@ PiPiClaw 内置轻量级 Web UI，启动后自动监听 `http://localhost:5050`
 
 <div align="center">
 
-**🦐 Made with ❤️ by 奶茶叔叔**
+<img src="./IMG_0868.png" alt="PiPiClaw Logo" width="26" style="vertical-align: middle; margin-right: 6px;" /> Made with ❤️ by 奶茶叔叔
 
 如果这个项目对你有帮助，请给一个 ⭐ Star 支持一下！
 

@@ -1,4 +1,4 @@
-# <div align="left" style="display: flex; align-items: center; line-height: 1.2;">  <span style="font-size: 32px; font-weight: bold;">🦐 PiPiClaw - Intelligent DevOps Automation Agent</span> </div>
+# <div align="left" style="display: flex; align-items: center; line-height: 1.2; gap: 8px;">  <img src="./IMG_0868.png" alt="PiPiClaw Logo" width="40" /> <span style="font-size: 32px; font-weight: bold;">PiPiClaw - Intelligent Agent</span> </div>
 
 <div align="center">
 
@@ -11,21 +11,22 @@
 ![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
 ![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
-**🦐 Let AI Be Your DevOps Commander | Intelligent Automation Expert in the Command Line**
+**Let AI be your all-round copilot — natively connected to 10,000+ Skill-Hub ecosystem skills**
 
 **🌐 Language | 语言切换:** [English](README_EN.md) | [中文](README.md)
 
 </div>
 
-> 🏆 **Packed binary ~2 MB** — likely the tiniest DevOps AI “shrimp” on the web; single-file publish with instant startup, pocket-friendly to carry everywhere.
+> 🏆 **Packed binary ~2 MB** — likely the tiniest local AI agent around; single-file publish with instant startup, pocket-friendly to carry everywhere.
 
 ---
 
 ## 📖 Project Introduction
 
-**PiPiClaw** is a personal AI DevOps assistant that runs on your own device. Built on Alibaba Cloud's Qwen model, it stays lightweight and always-on, pairing the terminal with a built-in Web console to render the commands and task board you control across Windows, macOS, and Linux. The gateway is merely the management surface—the real assistant lives locally beside you.
+**PiPiClaw** is a personal AI copilot that runs on your own device. Built on Alibaba Cloud's Qwen model, it stays lightweight and always-on, pairing the terminal with a built-in Web console to render the commands and task board you control across Windows, macOS, and Linux. The gateway is merely the management surface—the real assistant lives locally beside you.
 
-If you want a fast, always-online, single-user DevOps copilot that feels like a native helper, PiPiClaw is built for that experience.
+- Beyond DevOps: a full-spectrum local agent that can orchestrate development, automation, data handling, knowledge search, and more.
+- Native Skill-Hub integration lets you search and install 10,000+ ecosystem skills with one click to expand capabilities without limits.
 
 > Recommended setup: run `dotnet run` directly in the terminal and follow the first-run guide to set DashScope API Key, model, and the Web console. You can also publish a self-contained AOT build (`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`) and run it instantly on macOS, Linux, or Windows (including WSL2). New installations can start with the “Quick Start” section below.
 
@@ -252,7 +253,7 @@ This project is open source under the [MIT License](LICENSE).
 
 <div align="center">
 
-**🦐 Made with ❤️ by 奶茶叔叔**
+<img src="./IMG_0868.png" alt="PiPiClaw Logo" width="26" style="vertical-align: middle; margin-right: 6px;" /> Made with ❤️ by 奶茶叔叔
 
 If this project helps you, please give it a ⭐ Star to show your support!
 
