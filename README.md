@@ -7,12 +7,15 @@
 ![Arch](https://img.shields.io/badge/Arch-x86%20%7C%20x64%20%7C%20ARM32%20%7C%20ARM64-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 ![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
+![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
 **🦐 让 AI 成为你的运维指挥官 | 命令行里的智能自动化专家**
 
 **🌐 语言切换 | Language:** [中文](README.md) | [English](README_EN.md)
 
 </div>
+
+> 🏆 **打包后仅 ~2 MB** —— 全网最小的 AI 运维「龙虾」，单文件发布、秒级启动，插U盘就能跑。
 
 ---
 
@@ -183,6 +186,7 @@ PiPiClaw/
 ### 项目特性
 
 - ✅ **AOT 编译** - 更小的体积、更快的启动速度
+- ✅ **极致轻量** - 发布包仅 ~2 MB，随身携带、秒开即用
 - ✅ **跨平台** - 支持 Windows、Linux、macOS
 - ✅ **流式对话** - 支持多轮上下文对话
 - ✅ **工具调用** - 10+ 内置工具智能调度
