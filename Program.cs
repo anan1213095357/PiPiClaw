@@ -1531,15 +1531,15 @@ string GetWebUIHtml()
                                      <div class="msg-content">神经链接已建立。等待指令……<br><br>
                                     <div style="color: var(--pipi-cyan); font-weight: bold; margin-bottom: 8px;">【简介与食用指南】</div>
                                     <div>
-            这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>
-            只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br>
-            💡 试试直接粘贴以下命令 (傻瓜式案例)：<br>
-            <span style="color: var(--text-muted); line-height: 1.6;">
-            1. "帮我扫描一下当前目录，看有没有 C# 相关的源码文件"<br>
-            2. "用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下"<br>
-            3. "帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt"<br>
-            4. "每天下午3点，帮我屏幕截图看一下我在干什么？"
-            </span>
+这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>
+只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br>
+💡 试试直接粘贴以下命令 (傻瓜式案例)：<br>
+<span style="color: var(--text-muted); line-height: 1.6;">
+1. "帮我扫描一下当前目录，看有没有 C# 相关的源码文件"<br>
+2. "用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下"<br>
+3. "帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt"<br>
+4. "每天下午3点，帮我屏幕截图看一下我在干什么？"
+</span>
                                    </div>
                                    </div>
                                </div>
