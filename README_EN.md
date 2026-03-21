@@ -2,6 +2,8 @@
 
 <div align="center">
 
+<img src="./IMG_0868.png" alt="PiPiClaw Logo" width="120" />
+
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)
 ![Arch](https://img.shields.io/badge/Arch-x86%20%7C%20x64%20%7C%20ARM32%20%7C%20ARM64-blue?style=flat-square)
@@ -21,9 +23,15 @@
 
 ## 📖 Project Introduction
 
-**PiPiClaw** is an intelligent DevOps automation command-line tool based on Alibaba Cloud's Qwen large language model. Through natural language interaction, it helps you automatically execute system commands, manage files, analyze logs, and schedule timed tasks, making tedious DevOps work simple and efficient.
+**PiPiClaw** is a personal AI DevOps assistant that runs on your own device. Built on Alibaba Cloud's Qwen model, it stays lightweight and always-on, pairing the terminal with a built-in Web console to render the commands and task board you control across Windows, macOS, and Linux. The gateway is merely the management surface—the real assistant lives locally beside you.
 
-Just input natural language instructions like telling a human, and PiPiClaw will understand your intent and automatically call the appropriate tools to complete the task — like having a 24/7 online DevOps expert ready to assist.
+If you want a fast, always-online, single-user DevOps copilot that feels like a native helper, PiPiClaw is built for that experience.
+
+> Recommended setup: run `dotnet run` directly in the terminal and follow the first-run guide to set DashScope API Key, model, and the Web console. You can also publish a self-contained AOT build (`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`) and run it instantly on macOS, Linux, or Windows (including WSL2). New installations can start with the “Quick Start” section below.
+
+<div align="center">
+  <img src="./IMG_0870.png" alt="PiPiClaw overview preview" width="720" />
+</div>
 
 ---
 
