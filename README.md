@@ -2,6 +2,8 @@
 
 <div align="center">
 
+<img src="./IMG_0868.png" alt="PiPiClaw Logo" width="120" />
+
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)
 ![Arch](https://img.shields.io/badge/Arch-x86%20%7C%20x64%20%7C%20ARM32%20%7C%20ARM64-blue?style=flat-square)
@@ -21,9 +23,15 @@
 
 ## 📖 项目简介
 
-**PiPiClaw (皮皮虾)** 是一款基于阿里云通义千问大语言模型的智能运维自动化命令行工具。它通过自然语言交互，帮助你自动执行系统命令、管理文件、分析日志、规划定时任务，让繁琐的运维工作变得简单高效。
+**PiPiClaw (皮皮虾)** 是一款运行在你自己的设备上的个人 AI 运维助手，基于阿里云通义千问大语言模型，主打本地、轻量、随取随用。通过终端和内置 Web 控制台，它能在 Windows、macOS、Linux 上陪伴你的工作流，实时渲染由你控制的命令与任务画面——网关只是管理入口，真正执行的是在你机器上常驻的助手本体。
 
-只需像吩咐人类一样输入自然语言指令，PiPiClaw 就能理解你的意图，自动调用合适的工具完成任务 —— 就像有一个 24 小时在线的运维专家随时待命。
+如果你想要一个像本地助手一样、速度快、始终在线的单人运维 AI 助手，PiPiClaw 正好契合这一需求。
+
+> 推荐设置：直接在终端运行 `dotnet run`，首次启动会引导你完成 DashScope API Key、模型与 Web 控制台的配置；也可以用自包含 AOT 发布（`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`），在 macOS、Linux、Windows（含 WSL2）上即装即用。全新安装可以从下方「快速开始」走起。
+
+<div align="center">
+  <img src="./IMG_0870.png" alt="PiPiClaw 运行效果预览" width="720" />
+</div>
 
 ---
 
