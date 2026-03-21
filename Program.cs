@@ -1569,6 +1569,34 @@ string GetWebUIHtml()
     @keyframes barDance{0%,100%{height:8px;background:var(--pipi-cyan)}50%{height:20px;background:var(--pipi-magenta)}}
     @keyframes shineText{0%{background-position:0% center}100%{background-position:200% center}}
     @keyframes glitch{0%,100%{transform:none}92%{transform:translate(1px,1px) skewX(2deg);filter:hue-rotate(90deg)}94%{transform:translate(-1px,-1px) skewX(-2deg)}96%{transform:translate(2px,0) skewX(0)}}
+    
+    /* === 新增的命令提示卡片样式 === */
+    .intro-text { line-height: 1.6; margin-bottom: 12px; }
+    .intro-text strong { color: var(--pipi-cyan); font-weight: normal; }
+    .cmd-suggestions { display: flex; flex-direction: column; gap: 10px; margin-top: 15px; }
+    .cmd-item {
+      background: rgba(0,242,254,0.06);
+      border-left: 3px solid var(--pipi-cyan);
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 0.9em;
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.25s ease;
+      position: relative;
+    }
+    .cmd-item:hover {
+      background: rgba(0,242,254,0.15);
+      transform: translateX(6px);
+      box-shadow: 0 4px 15px rgba(0,242,254,0.15);
+      border-left-color: var(--pipi-magenta);
+    }
+    .cmd-item::before {
+      content: ">_ ";
+      color: var(--pipi-magenta);
+      font-weight: bold;
+      margin-right: 5px;
+    }
   </style>
 </head>
 
@@ -1634,17 +1662,19 @@ string GetWebUIHtml()
             皮皮虾 // 系统
           </div>
           <div class="msg-content">
-神经链接已建立。等待指令……
-
-【简介与食用指南】
-这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。
-只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。
-
-试试直接粘贴以���命令：
-1. "帮我扫描一下当前目录，看有没有 C# 相关的源码文件"
-2. "用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下"
-3. "帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt"
-4. "每天下午3点，帮我屏幕截图看一下我在干什么？"
+            <div class="intro-text">
+              <strong>神经链接已建立。等待指令……</strong><br><br>
+              【简介与食用指南】<br>
+              这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>
+              只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br>
+              <span style="color:var(--text-muted); font-size: 0.9em;">试试直接点击或粘贴以下命令：</span>
+            </div>
+            <div class="cmd-suggestions">
+              <div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我扫描一下当前目录，看有没有 C# 相关的源码文件';">帮我扫描一下当前目录，看有没有 C# 相关的源码文件</div>
+              <div class="cmd-item" onclick="document.getElementById('chatInput').value='用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下';">用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下</div>
+              <div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt';">帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt</div>
+              <div class="cmd-item" onclick="document.getElementById('chatInput').value='每天下午3点，帮我屏幕截图看一下我在干什么？';">每天下午3点，帮我屏幕截图看一下我在干什么？</div>
+            </div>
           </div>
         </div>
       </div>
