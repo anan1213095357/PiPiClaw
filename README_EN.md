@@ -7,12 +7,15 @@
 ![Arch](https://img.shields.io/badge/Arch-x86%20%7C%20x64%20%7C%20ARM32%20%7C%20ARM64-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 ![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
+![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
 **🦐 Let AI Be Your DevOps Commander | Intelligent Automation Expert in the Command Line**
 
 **🌐 Language | 语言切换:** [English](README_EN.md) | [中文](README.md)
 
 </div>
+
+> 🏆 **Packed binary ~2 MB** — likely the tiniest DevOps AI “shrimp” on the web; single-file publish with instant startup, pocket-friendly to carry everywhere.
 
 ---
 
@@ -183,6 +186,7 @@ PiPiClaw/
 ### Project Features
 
 - ✅ **AOT Compilation** - Smaller size, faster startup speed
+- ✅ **Ultra-lightweight** - Published package is only ~2 MB; single-file, instant start anywhere
 - ✅ **Cross-Platform** - Supports Windows, Linux, macOS
 - ✅ **Streaming Conversation** - Supports multi-turn contextual dialogue
 - ✅ **Tool Calling** - 10+ built-in tools with intelligent scheduling
