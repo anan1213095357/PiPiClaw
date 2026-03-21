@@ -1384,6 +1384,14 @@ async Task StartWebManager()
                 if (!string.IsNullOrEmpty(inputMsg)) await RunAgent(inputMsg, false, onUpdate);
                 res.Close();
             }
+            else if (url.AbsolutePath == "/api/history" && req.HttpMethod == "GET")
+            {
+                string historyJson = JsonSerializer.Serialize(fullHistory, AppJsonContext.Default.ListChatMessage);
+                byte[] buffer = Encoding.UTF8.GetBytes(historyJson);
+                res.ContentType = "application/json";
+                await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                res.Close();
+            }
             else
             {
                 res.StatusCode = 404;
@@ -2306,7 +2314,67 @@ string GetWebUIHtml()
       }
     }
 
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/history');
+        if (!res.ok) return;
+        const messages = await res.json();
+        if (!Array.isArray(messages) || messages.length === 0) return;
+        const chatBox = document.getElementById('chatBox');
+
+        let currentAiContentBox = null;
+        let currentTerminalBox = null;
+
+        for (const msg of messages) {
+          if (msg.role === 'user') {
+            chatBox.insertAdjacentHTML('beforeend', `<div class="msg user"><div class="msg-header">我</div><div class="msg-content">${escapeHtml(msg.content)}</div></div>`);
+            currentAiContentBox = null;
+            currentTerminalBox = null;
+          } else if (msg.role === 'assistant') {
+            if (!currentAiContentBox) {
+              const uniqueId = 'hist_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+              chatBox.insertAdjacentHTML('beforeend', `<div class="msg ai"><div class="msg-header">皮皮虾 // 工具</div><div class="msg-content" id="${uniqueId}"></div></div>`);
+              currentAiContentBox = document.getElementById(uniqueId);
+              currentTerminalBox = null;
+            }
+            if (msg.tool_calls) {
+              if (!currentTerminalBox) {
+                currentTerminalBox = document.createElement('div');
+                currentTerminalBox.className = 'exec-terminal';
+                currentAiContentBox.appendChild(currentTerminalBox);
+              }
+              for (const tc of msg.tool_calls) {
+                const actionSpan = document.createElement('span');
+                actionSpan.className = 'log-action';
+                actionSpan.textContent = '>> ' + tc.function.name + '(' + tc.function.arguments + ')';
+                currentTerminalBox.appendChild(actionSpan);
+              }
+            }
+            if (msg.content) {
+              const finalWrap = document.createElement('div');
+              if (currentTerminalBox) finalWrap.style.marginTop = '12px';
+              finalWrap.textContent = msg.content;
+              currentAiContentBox.appendChild(finalWrap);
+              currentTerminalBox = null;
+            }
+          } else if (msg.role === 'tool') {
+            if (currentTerminalBox && msg.content) {
+              const resultSpan = document.createElement('span');
+              resultSpan.className = 'log-result';
+              resultSpan.textContent = msg.content;
+              currentTerminalBox.appendChild(resultSpan);
+            }
+          }
+        }
+
+        chatBox.scrollTop = chatBox.scrollHeight;
+      } catch(e) {
+        console.warn('[loadHistory] failed:', e);
+      }
+    }
+
     loadConfig();
+    loadHistory();
   </script>
 </body>
 </html>
