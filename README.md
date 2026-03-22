@@ -12,6 +12,7 @@
 ![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
 **让 AI 成为你的全能智能管家，原生对接 Skill-Hub 一万+ 生态技能**
+**点击链接加入群聊【天网终端】：https://qm.qq.com/q/94ufOsyhZ6**
 
 **🌐 语言切换 | Language:** [中文](README.md) | [English](README_EN.md)
 
