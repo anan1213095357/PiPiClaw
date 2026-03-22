@@ -460,8 +460,20 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 return err;
             }
             var msg = JsonSerializer.Deserialize(responseString, AppJsonContext.Default.LlmResponse)?.Choices?.FirstOrDefault()?.Message;
+            if (msg != null)
+            {
+                if (msg.Content == "")
+                {
+                    msg.Content = null;
+                }
+                if (msg.ReasoningContent == "")
+                {
+                    msg.ReasoningContent = null;
+                }
+            }
 
-            cts.Cancel(); await animTask;
+            cts.Cancel(); 
+            await animTask;
             if (msg == null) break;
 
             fullHistory.Add(msg.DeepClone());
@@ -554,7 +566,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     var toolResultMsg = new ChatMessage
                     {
                         Role = "tool",
-                        Name = fnName,
+                        //Name = fnName,
                         Content = result,
                         ToolCallId = call.Id
                     };
@@ -1602,7 +1614,7 @@ string GetWebUIHtml()
       background-size:200% auto;
       -webkit-background-clip:text;
       -webkit-text-fill-color:transparent;
-      filter:drop-shadow(0 4px 12px rgba(0,0,0,.35));
+      filter:drop-shadow(0 4px 12px rgba(0,0,0,.1));
       animation:shineText 8s ease infinite;
       display:inline-flex;
       align-items:center;
@@ -1681,7 +1693,7 @@ string GetWebUIHtml()
       border-radius:3px;
     }
 
-    .logo-mark{width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 8px rgba(0,242,254,.25));}
+    .logo-mark{width:42px;height:42px;object-fit:contain;border-radius: 7px;}
     .logo-badge{width:22px;height:22px;object-fit:contain;vertical-align:middle;}
 
     .collapsible .collapse-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
@@ -1850,7 +1862,7 @@ string GetWebUIHtml()
     }
     textarea{
       width:100%;
-      min-height:64px;
+      min-height:100px;
       max-height:200px;
       background:var(--input-bg);
       border:1px solid var(--input-border);
@@ -2084,29 +2096,16 @@ textarea {
     <div class="box" id="terminalBox" style="animation-delay:.2s;">
       <h2><span style="color:var(--pipi-magenta);">⌨️</span> 交互终端 (Terminal)</h2>
 
-      <div class="chat-box" id="chatBox">
-        <div class="msg ai">
-          <div class="msg-header">
-            <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="PiPiClaw Logo" class="logo-badge" />
-            皮皮虾 // 系统
-          </div>
-          <div class="msg-content">
-            <div class="intro-text">
-<strong>神经链接已建立。等待指令……</strong><br><br>
-【简介与食用指南】<br>
-这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>
-只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br>
-<span style="color:var(--text-muted); font-size: 0.9em;">试试直接点击或粘贴以下命令：</span>
-            </div>
-            <div class="cmd-suggestions">
-              <div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我扫描一下当前目录，看有没有 C# 相关的源码文件';">帮我扫描一下当前目录，看有没有 C# 相关的源码文件</div>
-              <div class="cmd-item" onclick="document.getElementById('chatInput').value='用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下';">用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下</div>
-              <div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt';">帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt</div>
-              <div class="cmd-item" onclick="document.getElementById('chatInput').value='每天下午3点，帮我屏幕截图看一下我在干什么？';">每天下午3点，帮我屏幕截图看一下我在干什么？</div>
-            </div>
-          </div>
-        </div>
-      </div>
+<div class="chat-box" id="chatBox">
+  <div class="msg ai">
+    <div class="msg-header">
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="PiPiClaw Logo" class="logo-badge" />
+      皮皮虾 // 系统
+    </div>
+
+    <div class="msg-content"><div class="intro-text" style="margin-bottom: 12px; line-height: 1.5;"><strong>神经链接已建立。等待指令……</strong><br><br>【简介与食用指南】<br>这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br><span style="color:var(--text-muted); font-size: 0.9em;">试试直接点击或粘贴以下命令：</span></div><div class="cmd-suggestions" style="display: flex; flex-direction: column; gap: 8px;"><div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我扫描一下当前目录，看有没有 C# 相关的源码文件';">帮我扫描一下当前目录，看有没有 C# 相关的源码文件</div><div class="cmd-item" onclick="document.getElementById('chatInput').value='用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下';">用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下</div><div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt';">帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt</div><div class="cmd-item" onclick="document.getElementById('chatInput').value='每天下午3点，帮我屏幕截图看一下我在干什么？';">每天下午3点，帮我屏幕截图看一下我在干什么？</div></div></div>
+    </div>
+</div>
 
       <div class="input-area">
           <div class="input-main">
@@ -2744,6 +2743,7 @@ public class ChatMessage
 {
     [JsonPropertyName("role")] public string Role { get; set; } = "";
     [JsonPropertyName("content")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Content { get; set; }
+    [JsonPropertyName("reasoning_content")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? ReasoningContent { get; set; }
     [JsonPropertyName("name")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Name { get; set; }
     [JsonPropertyName("tool_call_id")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? ToolCallId { get; set; }
     [JsonPropertyName("tool_calls")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<ToolCall>? ToolCalls { get; set; }
