@@ -2002,7 +2002,7 @@ textarea {
   position: relative;
 }
 .btn-remove-model {
-   position: absolute; top: 12px; right: 12px;
+   position: absolute; top: 2px; right: 2px;
    background: transparent; color: var(--pipi-magenta); border: none; cursor: pointer; font-size:1.1em;
 }
 .btn-add-model {
