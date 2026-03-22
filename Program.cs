@@ -325,8 +325,12 @@ while (true)
 
     Console.ForegroundColor = ConsoleColor.Magenta;
     Console.Write("\n皮皮虾 > ");
-    Console.ResetColor();
-    var input = Console.ReadLine();
+    var input = "";
+    if (!Console.IsInputRedirected && !Console.IsOutputRedirected)
+    {
+        input = Console.ReadLine();
+    }
+
     if (input == null)
     {
         await Task.Delay(-1);
@@ -467,7 +471,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 }
             }
 
-            cts.Cancel(); 
+            cts.Cancel();
             await animTask;
             if (msg == null) break;
 
@@ -521,13 +525,11 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                             result = "[系统提示] 上下文清理已预约，这将在你给出最后一句回复后执行。请现在用正常的自然语言向用户总结任务完成情况。";
                             try
                             {
-                                File.Delete(Path.Combine(AppContext.BaseDirectory + checkpointPath));
-                                
-                            }
-                            catch (Exception ex)
-                            {
+                                var fullPath = Path.Combine(AppContext.BaseDirectory, checkpointPath);
+                                if (File.Exists(fullPath)) File.Delete(fullPath);
 
                             }
+                            catch (Exception ex) { }
                             onUpdate?.Invoke("clear_chat", "");
                             Console.ForegroundColor = ConsoleColor.Green;
                             Console.WriteLine("[内部状态] Agent 判定任务结束，已预约清理上下文...");
@@ -764,17 +766,27 @@ void SaveData(List<ChatMessage> data, string path)
 
 string ReadPasswordHidden()
 {
+    if (Console.IsInputRedirected || Console.IsOutputRedirected)
+    {
+        Console.WriteLine("[警告] 检测到非交互式终端，无法安全读取密码，请在 appsettings.json 中手动配置。");
+        return "";
+    }
+
     var pwd = new StringBuilder();
     while (true)
     {
-        var i = Console.ReadKey(true);
-        if (i.Key == ConsoleKey.Enter) break;
-        else if (i.Key == ConsoleKey.Backspace)
+        try
         {
-            if (pwd.Length <= 0) continue;
-            pwd.Remove(pwd.Length - 1, 1); Console.Write("\b \b");
+            var i = Console.ReadKey(true);
+            if (i.Key == ConsoleKey.Enter) break;
+            else if (i.Key == ConsoleKey.Backspace)
+            {
+                if (pwd.Length <= 0) continue;
+                pwd.Remove(pwd.Length - 1, 1); Console.Write("\b \b");
+            }
+            else if (i.KeyChar != '\u0000') { pwd.Append(i.KeyChar); Console.Write("*"); }
         }
-        else if (i.KeyChar != '\u0000') { pwd.Append(i.KeyChar); Console.Write("*"); }
+        catch { break; } // 捕获 Linux 下可能抛出的异常
     }
     Console.WriteLine();
     return pwd.ToString();
@@ -1434,7 +1446,8 @@ async Task StartWebManager()
         try
         {
             var context = await listener.GetContextAsync();
-            _ = Task.Run(async () => {
+            _ = Task.Run(async () =>
+            {
                 try
                 {
                     await HandleRequestAsync(context, webPort);
