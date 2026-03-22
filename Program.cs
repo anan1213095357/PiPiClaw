@@ -1436,6 +1436,7 @@ string GetWebUIHtml()
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="color-scheme" content="light dark" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <title>PiPiClaw // SkillHub Ready C&amp;C Terminal v3.0</title>
 
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -1516,8 +1517,10 @@ string GetWebUIHtml()
       --chat-box-bg: rgba(255,255,255,.82);
       --chat-box-border: rgba(0,0,0,.08);
       
-      --msg-user-bg: linear-gradient(145deg,rgba(74,144,226,.16),rgba(255,255,255,.9));
-      --msg-ai-bg: linear-gradient(145deg,rgba(124,111,241,.16),rgba(255,255,255,.92));
+/* 用户：清爽的商务蓝 */
+--msg-user-bg: linear-gradient(145deg, #e3f2fd, #bbdefb);
+/* AI：低调的现代灰 */
+--msg-ai-bg: linear-gradient(145deg, #f5f5f5, #e0e0e0);
       
       --term-bg: #f6f7fb;
       --term-border: rgba(0,0,0,.08);
@@ -2528,21 +2531,20 @@ async function saveConfig() {
             }
 
             if (data.type === 'final') {
-              const finalWrap = document.createElement('div');
-              finalWrap.style.marginTop = '12px';
-              contentBox.appendChild(finalWrap);
+                // 1. 创建容器
+                const finalWrap = document.createElement('div');
+                finalWrap.style.marginTop = '12px';
+                contentBox.appendChild(finalWrap);
 
-              const txt = String(data.content ?? '');
-              let i = 0;
-              const chunk = txt.length > 300 ? 4 : 2;
+                const rawText = String(data.content ?? '');
 
-              const timer = setInterval(() => {
-                finalWrap.appendChild(document.createTextNode(txt.substring(i, i + chunk)));
-                i += chunk;
+                // 2. 核心：使用 marked 解析 Markdown
+                // 禁用打字机动画（因为 HTML 标签在打字过程中会造成 DOM 错乱）
+                // 如果一定要打字机效果，建议直接渲染结果
+                finalWrap.innerHTML = marked.parse(rawText);
+
                 chatBox.scrollTop = chatBox.scrollHeight;
-                if (i >= txt.length) clearInterval(timer);
-              }, 15);
-            }
+            }   
 
             chatBox.scrollTop = chatBox.scrollHeight;
           }
@@ -2600,11 +2602,14 @@ async function saveConfig() {
               }
             }
             if (msg.content) {
-              const finalWrap = document.createElement('div');
-              if (currentTerminalBox) finalWrap.style.marginTop = '12px';
-              finalWrap.textContent = msg.content;
-              currentAiContentBox.appendChild(finalWrap);
-              currentTerminalBox = null;
+                const finalWrap = document.createElement('div');
+                if (currentTerminalBox) finalWrap.style.marginTop = '12px';
+
+                // 修改这里：使用 marked 解析
+                finalWrap.innerHTML = marked.parse(msg.content); 
+
+                currentAiContentBox.appendChild(finalWrap);
+                currentTerminalBox = null;
             }
           } else if (msg.role === 'tool') {
             if (currentTerminalBox && msg.content) {
