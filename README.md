@@ -93,33 +93,50 @@ dotnet publish -c Release -r linux-x64 --self-contained true
 
 ### 配置文件 (appsettings.json)
 
+> 首次运行会自动生成，内置 `Models` 列表可在 Web 控制台中增删并下拉切换。
+
 ```json
 {
-  "ApiKey": "sk-your-actual-api-key-here",
-  "Model": "qwen3.5-plus",
-  "Endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-  "SudoPassword": ""
+  "Models": [
+    {
+      "ApiKey": "sk-your-actual-api-key-here",
+      "Model": "qwen3.5-plus",
+      "Endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    }
+  ],
+  "SudoPassword": "",
+  "WebPort": 5050
 }
 ```
 
 | 配置项 | 说明 |
 |--------|------|
-| `ApiKey` | Openai DashScope API 密钥 |
-| `Model` | 使用的 AI 模型 (默认 qwen3.5-plus) |
-| `Endpoint` | API 端点地址 |
+| `Models` | 模型配置列表，首个为默认模型，Web UI 下拉实时切换 |
+| `Models[].ApiKey` | 阿里云 DashScope API 密钥 |
+| `Models[].Model` | 使用的 AI 模型 (默认 qwen3.5-plus) |
+| `Models[].Endpoint` | API 端点地址 |
 | `SudoPassword` | (可选) Linux/macOS 自动提权密码 |
+| `WebPort` | Web 控制台端口 (默认 5050) |
 
 ### 环境变量方式
 
 ```bash
 # macOS / Linux
-export QWENCLI_API_KEY="sk-your-api-key-here"
-export QWENCLI_MODEL="qwen3.5-plus"
-export QWENCLI_ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+export ApiKey="sk-your-api-key-here"
+export Model="qwen3.5-plus"
+export Endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+export WebPort=5050
+export SudoPassword=""
 
 # Windows PowerShell
-$env:QWENCLI_API_KEY="sk-your-api-key-here"
+$env:ApiKey="sk-your-api-key-here"
+$env:Model="qwen3.5-plus"
+$env:Endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+$env:WebPort="5050"
+$env:SudoPassword=""
 ```
+
+> 环境变量名与配置字段一致（区分大小写），适合容器或临时覆盖。
 
 ---
 
@@ -219,7 +236,7 @@ PiPiClaw 内置轻量级 Web UI，启动后自动监听 `http://localhost:5050`
 - 🎨 赛博朋克风格界面
 - 📡 实时流式输出工具调用过程
 - ⏰ 定时任务可视化查看
-- 🔧 在线配置 API Key 和模型
+- 🔧 在线配置 / 切换多模型（API Key / 模型下拉）
 - 📷 左下角二维码，手机扫码即连
 
 ---

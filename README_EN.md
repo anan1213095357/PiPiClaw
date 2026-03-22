@@ -91,33 +91,50 @@ dotnet publish -c Release -r linux-x64 --self-contained true
 
 ### Configuration File (appsettings.json)
 
+> Generated on first run. The `Models` list supports adding multiple providers and switching from the Web UI dropdown.
+
 ```json
 {
-  "ApiKey": "sk-your-actual-api-key-here",
-  "Model": "qwen3.5-plus",
-  "Endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-  "SudoPassword": ""
+  "Models": [
+    {
+      "ApiKey": "sk-your-actual-api-key-here",
+      "Model": "qwen3.5-plus",
+      "Endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    }
+  ],
+  "SudoPassword": "",
+  "WebPort": 5050
 }
 ```
 
 | Config | Description |
 |--------|-------------|
-| `ApiKey` | Alibaba Cloud DashScope API Key |
-| `Model` | AI model to use (default: qwen3.5-plus) |
-| `Endpoint` | API endpoint URL |
+| `Models` | Model list; the first entry is default and can be switched live in the Web UI |
+| `Models[].ApiKey` | Alibaba Cloud DashScope API Key |
+| `Models[].Model` | AI model to use (default: qwen3.5-plus) |
+| `Models[].Endpoint` | API endpoint URL |
 | `SudoPassword` | (Optional) Auto-privilege password for Linux/macOS |
+| `WebPort` | Web console port (default 5050) |
 
 ### Environment Variables
 
 ```bash
 # macOS / Linux
-export QWENCLI_API_KEY="sk-your-api-key-here"
-export QWENCLI_MODEL="qwen3.5-plus"
-export QWENCLI_ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+export ApiKey="sk-your-api-key-here"
+export Model="qwen3.5-plus"
+export Endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+export WebPort=5050
+export SudoPassword=""
 
 # Windows PowerShell
-$env:QWENCLI_API_KEY="sk-your-api-key-here"
+$env:ApiKey="sk-your-api-key-here"
+$env:Model="qwen3.5-plus"
+$env:Endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+$env:WebPort="5050"
+$env:SudoPassword=""
 ```
+
+> Environment variable names match the config keys (case-sensitive), handy for containers or temporary overrides.
 
 ---
 
@@ -217,7 +234,7 @@ PiPiClaw includes a built-in lightweight Web UI, automatically listening on `htt
 - 🎨 Cyberpunk style interface
 - 📡 Real-time streaming output of tool calls
 - ⏰ Visual scheduled task viewing
-- 🔧 Online API Key and model configuration
+- 🔧 Online multi-model configuration / switching (API Key + dropdown)
 - 📷 QR code in bottom-left corner for quick mobile connection
 
 ---
