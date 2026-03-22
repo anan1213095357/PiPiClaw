@@ -1663,6 +1663,36 @@ string GetWebUIHtml()
     .collapse-body{margin-top:15px;}
     .collapsible.collapsed .collapse-body{display:none;}
 
+    .modal{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.55);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:20px;
+      z-index:2000;
+      backdrop-filter:blur(8px);
+    }
+    .modal.show{display:flex;}
+    .modal-dialog{
+      width:min(820px,calc(100% - 30px));
+      max-height:90dvh;
+      overflow:auto;
+    }
+    .modal-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:12px;
+    }
+    .modal-close{
+      width:40px;
+      height:40px;
+      font-size:0.9em;
+    }
+
     .config-grid{display:grid;grid-template-columns:1fr;gap:15px;}
     .config-row{display:grid;grid-template-columns:1fr 1fr;gap:15px;}
     @media (max-width:600px){.config-row{grid-template-columns:1fr;}}
@@ -1925,7 +1955,7 @@ string GetWebUIHtml()
 
   <div class="container">
     <div class="header">
-      <button type="button" class="header-btn collapse-toggle" id="configToggle" onclick="toggleConfig()" aria-expanded="true" title="展开/收起设置">⚙</button>
+      <button type="button" class="header-btn collapse-toggle" id="configToggle" onclick="toggleConfig()" aria-expanded="false" title="展开/收起设置">⚙</button>
       <h1>
         <img class="logo-mark" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="PiPiClaw Logo" />
         <span>PiPiClaw</span>
@@ -1933,49 +1963,6 @@ string GetWebUIHtml()
       <button class="header-btn theme-toggle" onclick="toggleTheme()" aria-label="切换主题" title="切换深/浅色主题">
         <span id="theme-icon">🌙</span>
       </button>
-    </div>
-
-    <div class="box collapsible" id="configBox" style="animation-delay:.1s;">
-      <div class="collapse-header">
-        <h2><span style="color:var(--pipi-cyan);">🛰️</span> 核心链路配置 (Config)</h2>
-      </div>
-
-      <div class="collapse-body" id="configBody">
-        <div class="config-grid">
-          <div class="config-row">
-            <div class="form-group">
-              <label>激活模型</label>
-              <input type="text" id="model" placeholder="e.g. qwen3.5-plus" />
-            </div>
-
-            <div class="form-group">
-              <label>密钥 (ApiKey)</label>
-              <input type="password" id="apiKey" placeholder="sk-..." />
-            </div>
-          </div>
-
-          <div class="config-row">
-            <div class="form-group">
-              <label>端点地址 (Endpoint)</label>
-              <input type="text" id="endpoint" placeholder="https://..." />
-            </div>
-
-            <div class="form-group">
-              <label>提权密码 (SudoPassword)</label>
-              <input type="password" id="sudoPassword" placeholder="自动执行 sudo 时使用的密码" />
-            </div>
-          </div>
-
-          <div class="config-row">
-            <div class="form-group">
-              <label>Web 端口 (WebPort)</label>
-              <input type="number" id="webPort" placeholder="5050" min="1" max="65535" />
-            </div>
-          </div>
-        </div>
-
-        <button class="btn-submit" type="button" onclick="saveConfig()">保存并上传配置</button>
-      </div>
     </div>
 
     <div class="box" id="terminalBox" style="animation-delay:.2s;">
@@ -2031,6 +2018,52 @@ string GetWebUIHtml()
     </div>
   </div>
 
+  <div class="modal" id="configModal" aria-hidden="true" role="dialog" aria-labelledby="configTitle">
+    <div class="modal-dialog box" id="configBox" style="animation:none;">
+      <div class="modal-header">
+        <h2 id="configTitle"><span style="color:var(--pipi-cyan);">🛰️</span> 核心链路配置 (Config)</h2>
+        <button type="button" class="header-btn modal-close" onclick="closeConfig()" aria-label="关闭设置">✖</button>
+      </div>
+
+      <div class="collapse-body" id="configBody">
+        <div class="config-grid">
+          <div class="config-row">
+            <div class="form-group">
+              <label>激活模型</label>
+              <input type="text" id="model" placeholder="e.g. qwen3.5-plus" />
+            </div>
+
+            <div class="form-group">
+              <label>密钥 (ApiKey)</label>
+              <input type="password" id="apiKey" placeholder="sk-..." />
+            </div>
+          </div>
+
+          <div class="config-row">
+            <div class="form-group">
+              <label>端点地址 (Endpoint)</label>
+              <input type="text" id="endpoint" placeholder="https://..." />
+            </div>
+
+            <div class="form-group">
+              <label>提权密码 (SudoPassword)</label>
+              <input type="password" id="sudoPassword" placeholder="自动执行 sudo 时使用的密码" />
+            </div>
+          </div>
+
+          <div class="config-row">
+            <div class="form-group">
+              <label>Web 端口 (WebPort)</label>
+              <input type="number" id="webPort" placeholder="5050" min="1" max="65535" />
+            </div>
+          </div>
+        </div>
+
+        <button class="btn-submit" type="button" onclick="saveConfig()">保存并上传配置</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const LOGO_DATA_URL = "{{LOGO_DATA_URL}}";
 
@@ -2058,30 +2091,43 @@ string GetWebUIHtml()
       }
     });
 
+    const configModal = document.getElementById('configModal');
     const configBox = document.getElementById('configBox');
     const configBody = document.getElementById('configBody');
     const configToggle = document.getElementById('configToggle');
 
-    function setConfigCollapsed(collapsed) {
-      if (!configBox || !configBody || !configToggle) return;
-      if (collapsed) {
-        configBox.classList.add('collapsed');
-        configToggle.setAttribute('aria-expanded', 'false');
-        configToggle.title = '展开设置';
-      } else {
-        configBox.classList.remove('collapsed');
-        configToggle.setAttribute('aria-expanded', 'true');
-        configToggle.title = '收起设置';
-      }
+    function openConfig() {
+      if (!configModal || !configToggle) return;
+      configModal.classList.add('show');
+      configModal.setAttribute('aria-hidden', 'false');
+      configToggle.setAttribute('aria-expanded', 'true');
+      configToggle.title = '收起设置';
+      const firstInput = configBody?.querySelector('input');
+      if (firstInput) firstInput.focus();
+    }
+
+    function closeConfig() {
+      if (!configModal || !configToggle) return;
+      configModal.classList.remove('show');
+      configModal.setAttribute('aria-hidden', 'true');
+      configToggle.setAttribute('aria-expanded', 'false');
+      configToggle.title = '展开设置';
     }
 
     function toggleConfig() {
-      if (!configBox) return;
-      setConfigCollapsed(!configBox.classList.contains('collapsed'));
+      if (!configModal) return;
+      if (configModal.classList.contains('show')) closeConfig();
+      else openConfig();
     }
 
-    // always start collapsed
-    setConfigCollapsed(true);
+    if (configModal) {
+      configModal.addEventListener('click', (e) => {
+        if (e.target === configModal) closeConfig();
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeConfig();
+    });
 
     // QR
     const host = window.location.hostname;
