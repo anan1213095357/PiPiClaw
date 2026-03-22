@@ -1,27 +1,18 @@
-using System;
 using System.Diagnostics;
-using System.IO;
-using System.IO.Compression;
-using System.Formats.Tar;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Net.NetworkInformation;
-using static System.Int32;
 
 
 // 设置当前目录为程序运行目录
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
 // 强制 Windows 控制台使用 UTF-8 编码 (替代庞大的 GBK Provider)
-if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !Console.IsOutputRedirected)
 {
     try
     {
