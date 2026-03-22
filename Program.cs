@@ -336,6 +336,10 @@ while (true)
     Console.Write("\n皮皮虾 > ");
     Console.ResetColor();
     var input = Console.ReadLine();
+    if (input == null)
+    {
+        await Task.Delay(-1);
+    }
     if (string.IsNullOrEmpty(input)) continue;
     if (input.Equals("exit", StringComparison.OrdinalIgnoreCase)) break;
 
