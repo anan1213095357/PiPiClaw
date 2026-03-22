@@ -78,12 +78,12 @@ var toolsDoc = JsonDocument.Parse("""
     { "type": "function", "function": { "name": "finish_task", "description": "当用户的最终目标已彻底完成时调用此工具。这会预约清空当前的上下文记忆，确保下一次接收新任务时处于干净的状态。", "parameters": { "type": "object", "properties": {} } } },
     { "type": "function", "function": { "name": "add_scheduled_task", "description": "添加定时或延时任务。系统底层的C#引擎会绝对接管时间调度，绝不能在任务执行时由AI去动态补加下一次任务。", "parameters": { "type": "object", "properties": { "execute_at": { "type": "string", "description": "首次执行时间，严格遵循 ISO 8601 格式，例如 '2026-03-20T14:30:00+08:00'" }, "user_intent": { "type": "string", "description": "到达时间时，大模型需要执行的具体任务要求和背景" }, "interval_minutes": { "type": "integer", "description": "可选。如果是周期性任务，请设置此周期间隔（分钟数）。例如每天执行则设为 1440。如果不填或为 0，则仅执行一次。系统会在底层自动无限循环，无需AI干预。" } }, "required": ["execute_at", "user_intent"] } } },
     { "type": "function", "function": { "name": "remove_scheduled_task", "description": "删除指定的定时或延时任务。", "parameters": { "type": "object", "properties": { "task_id": { "type": "string", "description": "要删除的任务ID（从任务列表中获取）" } }, "required": ["task_id"] } } },
-    { "type": "function", "function": { "name": "search_skill", "description": "当用户要求安装、查找或添加某个特定技能时执行此功能。根据关键词从 Skill-hub 搜索技能。注意：当用户说要“自我构建”或“编写”技能时，不要执行此功能。", "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "用户想要搜索或安装的技能关键词，例如 'calendar', 'weather' 等" } }, "required": ["query"] } } },
     { "type": "function", "function": { "name": "install_skill", "description": "安装 单个 Skill-hub 或者 从第三方的技能，并根据包含的 MD 文件自动了解对接方式。", "parameters": { "type": "object", "properties": { "slug": { "type": "string", "description": "技能列表中的slug字段只需传入这个字段即可" } }, "required": ["slug"] } } },
     { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } }
 ]
 """);
-
+//在没有找到合适的  搜索 api 之前先注释
+//    { "type": "function", "function": { "name": "search_skill", "description": "当用户要求安装、查找或添加某个特定技能时执行此功能。根据关键词从 Skill-hub 搜索技能。注意：当用户说要“自我构建”或“编写”技能时，不要执行此功能。", "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "用户想要搜索或安装的技能关键词，例如 'calendar', 'weather' 等" } }, "required": ["query"] } } },
 
 // ========================== Logo & 简介 ==========================
 Console.ForegroundColor = ConsoleColor.Magenta;
@@ -518,7 +518,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     var result = "";
                     switch (fnName)
                     {
-                        case "search_skill": result = await SearchSkill(GetStrProp(tempArgs, "query")); break;
+                        //case "search_skill": result = await SearchSkill(GetStrProp(tempArgs, "query")); break;
                         case "install_skill": result = await InstallSkill(GetStrProp(tempArgs, "slug")); break;
                         case "finish_task":
                             requireReset = true;
@@ -1001,54 +1001,54 @@ string SearchContent(string? dir, string? keyword, string? pattern)
 }
 
 // ========================== 13. 技能拓展功能 ==========================
-async Task<string> SearchSkill(string? query)
-{
-    if (string.IsNullOrEmpty(query)) return "❌ 搜索关键词不能为空";
-    var sb = new StringBuilder();
-    sb.AppendLine($"🚀 正在为您搜索技能: '{query}' ...");
+//async Task<string> SearchSkill(string? query)
+//{
+//    if (string.IsNullOrEmpty(query)) return "❌ 搜索关键词不能为空";
+//    var sb = new StringBuilder();
+//    sb.AppendLine($"🚀 正在为您搜索技能: '{query}' ...");
 
-    using var handler = new HttpClientHandler() { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
-    using var searchClient = new HttpClient(handler);
-    searchClient.DefaultRequestHeaders.Add("User-Agent", "skills-store-cli/0.1");
-    searchClient.DefaultRequestHeaders.Host = "skillhub.ai";
+//    using var handler = new HttpClientHandler() { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
+//    using var searchClient = new HttpClient(handler);
+//    searchClient.DefaultRequestHeaders.Add("User-Agent", "skills-store-cli/0.1");
+//    searchClient.DefaultRequestHeaders.Host = "skillhub.ai";
 
-    try
-    {
-        string escapedQuery = Uri.EscapeDataString(query);
-        string url = $"http://lb-3zbg86f6-0gwe3n7q8t4sv2za.clb.gz-tencentclb.com/api/v1/search?q={escapedQuery}&limit=10";
+//    try
+//    {
+//        string escapedQuery = Uri.EscapeDataString(query);
+//        string url = $"http://lb-3zbg86f6-0gwe3n7q8t4sv2za.clb.gz-tencentclb.com/api/v1/search?q={escapedQuery}&limit=10";
 
-        var response = await searchClient.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return $"❌ 搜索请求失败，状态码: {response.StatusCode}";
+//        var response = await searchClient.GetAsync(url);
+//        if (!response.IsSuccessStatusCode) return $"❌ 搜索请求失败，状态码: {response.StatusCode}";
 
-        var jsonString = await response.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(jsonString);
-        var root = doc.RootElement;
+//        var jsonString = await response.Content.ReadAsStringAsync();
+//        using var doc = JsonDocument.Parse(jsonString);
+//        var root = doc.RootElement;
 
-        if (root.TryGetProperty("results", out var resultsProp) && resultsProp.ValueKind == JsonValueKind.Array)
-        {
-            int count = resultsProp.GetArrayLength();
-            if (count == 0) return $"⚠️ 未找到与 '{query}' 相关的技能，请尝试其他关键词。";
+//        if (root.TryGetProperty("results", out var resultsProp) && resultsProp.ValueKind == JsonValueKind.Array)
+//        {
+//            int count = resultsProp.GetArrayLength();
+//            if (count == 0) return $"⚠️ 未找到与 '{query}' 相关的技能，请尝试其他关键词。";
 
-            sb.AppendLine($"✅ 找到 {count} 个相关技能：\n");
-            foreach (var item in resultsProp.EnumerateArray())
-            {
-                string slug = item.TryGetProperty("slug", out var s) ? s.GetString() ?? "未知" : "未知";
-                string name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "未知" : "未知";
-                string desc = item.TryGetProperty("description", out var d) ? d.GetString() ?? "无描述" :
-                              (item.TryGetProperty("summary", out var sum) ? sum.GetString() ?? "无描述" : "无描述");
+//            sb.AppendLine($"✅ 找到 {count} 个相关技能：\n");
+//            foreach (var item in resultsProp.EnumerateArray())
+//            {
+//                string slug = item.TryGetProperty("slug", out var s) ? s.GetString() ?? "未知" : "未知";
+//                string name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "未知" : "未知";
+//                string desc = item.TryGetProperty("description", out var d) ? d.GetString() ?? "无描述" :
+//                              (item.TryGetProperty("summary", out var sum) ? sum.GetString() ?? "无描述" : "无描述");
 
-                sb.AppendLine($"- 标识 (Slug): {slug}");
-                sb.AppendLine($"  名称 (Name): {name}");
-                sb.AppendLine($"  描述 (Desc): {desc}");
-                sb.AppendLine("  -------------------------");
-            }
-            sb.AppendLine("\n💡 请询问用户要安装以上哪一个技能，或者直接根据语境调用 install_skill 安装逻辑。");
-        }
-        else return "❌ 解析技能数据失败：返回的数据格式不包含 results 数组。";
-    }
-    catch (Exception ex) { return $"❌ 搜索过程发生异常: {ex.Message}"; }
-    return sb.ToString();
-}
+//                sb.AppendLine($"- 标识 (Slug): {slug}");
+//                sb.AppendLine($"  名称 (Name): {name}");
+//                sb.AppendLine($"  描述 (Desc): {desc}");
+//                sb.AppendLine("  -------------------------");
+//            }
+//            sb.AppendLine("\n💡 请询问用户要安装以上哪一个技能，或者直接根据语境调用 install_skill 安装逻辑。");
+//        }
+//        else return "❌ 解析技能数据失败：返回的数据格式不包含 results 数组。";
+//    }
+//    catch (Exception ex) { return $"❌ 搜索过程发生异常: {ex.Message}"; }
+//    return sb.ToString();
+//}
 
 async Task<string> InstallSkill(string? slug)
 {
