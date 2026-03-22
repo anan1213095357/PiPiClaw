@@ -23,18 +23,31 @@
 
 ## 📖 项目简介
 
-**PiPiClaw (皮皮虾)** 是一款运行在你自己的设备上的个人 AI 智能管家，基于阿里云通义千问大语言模型，主打本地、轻量、随取随用。通过终端和内置 Web 控制台，它能在 Windows、macOS、Linux 上陪伴你的工作流，实时渲染由你控制的命令与任务画面——网关只是管理入口，真正执行的是在你机器上常驻的助手本体。
+**PiPiClaw (皮皮虾)** 是一款运行在你自己的设备上的个人 AI 智能管家，基于 OpenAI 接口规范，默认示例使用 Qwen，但也可对接任何兼容 OpenAI 协议的 LLM（如 OpenAI/Azure OpenAI、通义千问、DeepSeek、Moonshot、SiliconFlow、Together 等）。通过终端和内置 Web 控制台，它能在 Windows、macOS、Linux 上陪伴你的工作流，实时渲染由你控制的命令与任务画面——网关只是管理入口，真正执行的是在你机器上常驻的助手本体。
 
 - 不止运维：它是全能的本地智能体，能编排开发、自动化、数据处理、信息检索等任意任务。
 - 原生对接 Skill-Hub，一键搜索并安装 10,000+ 生态技能，无限扩展能力版图。
 
 如果你想要一个像本地助手一样、速度快、始终在线的AI 助手，PiPiClaw 正好契合这一需求。
 
-> 推荐设置：直接在终端运行 `dotnet run`，首次启动会引导你完成 DashScope API Key、模型与 Web 控制台的配置；也可以用自包含 AOT 发布（`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`），在 macOS、Linux、Windows（含 WSL2）上即装即用。全新安装可以从下方「快速开始」走起。
+> 推荐设置：直接在终端运行 `dotnet run`，首次启动会引导你完成 API Key、模型与 Web 控制台的配置（支持任意 OpenAI 协议兼容的服务）；也可以用自包含 AOT 发布（`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`），在 macOS、Linux、Windows（含 WSL2）上即装即用。全新安装可以从下方「快速开始」走起。
 
 <div align="center">
   <img src="./IMG_0870.png" alt="PiPiClaw 运行效果预览" width="720" />
 </div>
+
+## 🖥️ 界面预览
+
+<div align="center">
+  <img src="./desktop-screenshot.png" alt="PiPiClaw 桌面端运行界面" width="49%" />
+  <img src="./settings-llm.png" alt="PiPiClaw 多模型设置（OpenAI 协议兼容，支持多家 LLM）" width="49%" />
+</div>
+
+<div align="center">
+  <img src="./mobile-layout.png" alt="PiPiClaw 移动端自适应布局" width="32%" />
+</div>
+
+> 桌面端设置页可自由添加任意 OpenAI 协议兼容的模型与 Endpoint，轻松切换 Qwen、DeepSeek、Moonshot、OpenAI/Azure 等不同 LLM。
 
 ---
 
@@ -60,7 +73,7 @@
 ### 前置要求
 
 - [.NET 10.0 SDK](https://dotnet.microsoft.com/download) 或更高版本
-- 阿里云 DashScope API Key ([获取地址](https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key))
+- 任意 **OpenAI 协议兼容** 的 API Key（示例：OpenAI/Azure OpenAI、阿里云 DashScope、DeepSeek、Moonshot、SiliconFlow、Together AI 等）
 
 ### 安装与运行
 
@@ -112,9 +125,9 @@ dotnet publish -c Release -r linux-x64 --self-contained true
 | 配置项 | 说明 |
 |--------|------|
 | `Models` | 模型配置列表，首个为默认模型，Web UI 下拉实时切换 |
-| `Models[].ApiKey` | 阿里云 DashScope API 密钥 |
-| `Models[].Model` | 使用的 AI 模型 (默认 qwen3.5-plus) |
-| `Models[].Endpoint` | API 端点地址 |
+| `Models[].ApiKey` | 任意 OpenAI/兼容接口的 API Key（示例为 DashScope） |
+| `Models[].Model` | 使用的 AI 模型 (默认示例 qwen3.5-plus，可填 DeepSeek/Moonshot/GPT 等) |
+| `Models[].Endpoint` | OpenAI 协议兼容的 API 端点地址 |
 | `SudoPassword` | (可选) Linux/macOS 自动提权密码 |
 | `WebPort` | Web 控制台端口 (默认 5050) |
 
@@ -137,6 +150,8 @@ $env:SudoPassword=""
 ```
 
 > 环境变量名与配置字段一致（区分大小写），适合容器或临时覆盖。
+
+> 以上为 DashScope 示例，请将 `Model` 与 `Endpoint` 替换为你所使用的 OpenAI 兼容服务（OpenAI/Azure/DeepSeek/Moonshot 等）的地址。
 
 ---
 
@@ -206,7 +221,7 @@ PiPiClaw/
 |------|----------|
 | **运行时** | .NET 10.0 |
 | **编译优化** | AOT (Ahead-of-Time) 编译 |
-| **AI 模型** | 阿里云通义千问 (qwen3.5-plus) |
+| **AI 模型** | OpenAI 协议兼容 LLM（示例：Qwen、DeepSeek、Moonshot、OpenAI/Azure 等） |
 | **HTTP 客户端** | System.Net.Http |
 | **JSON 处理** | System.Text.Json |
 | **编码支持** | UTF-8 / GBK 自动检测 |

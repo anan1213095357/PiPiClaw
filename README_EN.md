@@ -23,16 +23,29 @@
 
 ## 📖 Project Introduction
 
-**PiPiClaw** is a personal AI copilot that runs on your own device. Built on Alibaba Cloud's Qwen model, it stays lightweight and always-on, pairing the terminal with a built-in Web console to render the commands and task board you control across Windows, macOS, and Linux. The gateway is merely the management surface—the real assistant lives locally beside you.
+**PiPiClaw** is a personal AI copilot that runs on your own device. It follows the OpenAI API specification: the default example uses Qwen, but you can plug in any OpenAI-compatible LLM (OpenAI/Azure OpenAI, Qwen/DashScope, DeepSeek, Moonshot, SiliconFlow, Together AI, etc.). It stays lightweight and always-on, pairing the terminal with a built-in Web console to render the commands and task board you control across Windows, macOS, and Linux. The gateway is merely the management surface—the real assistant lives locally beside you.
 
 - Beyond DevOps: a full-spectrum local agent that can orchestrate development, automation, data handling, knowledge search, and more.
 - Native Skill-Hub integration lets you search and install 10,000+ ecosystem skills with one click to expand capabilities without limits.
 
-> Recommended setup: run `dotnet run` directly in the terminal and follow the first-run guide to set DashScope API Key, model, and the Web console. You can also publish a self-contained AOT build (`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`) and run it instantly on macOS, Linux, or Windows (including WSL2). New installations can start with the “Quick Start” section below.
+> Recommended setup: run `dotnet run` directly in the terminal and follow the first-run guide to set your API Key, model, and the Web console (any OpenAI-compatible provider works). You can also publish a self-contained AOT build (`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`) and run it instantly on macOS, Linux, or Windows (including WSL2). New installations can start with the “Quick Start” section below.
 
 <div align="center">
   <img src="./IMG_0870.png" alt="PiPiClaw overview preview" width="720" />
 </div>
+
+## 🖥️ Interface Preview
+
+<div align="center">
+  <img src="./desktop-screenshot.png" alt="PiPiClaw desktop console in action" width="49%" />
+  <img src="./settings-llm.png" alt="PiPiClaw multi-provider settings (OpenAI-compatible LLMs)" width="49%" />
+</div>
+
+<div align="center">
+  <img src="./mobile-layout.png" alt="PiPiClaw mobile responsive layout" width="32%" />
+</div>
+
+> The desktop settings page lets you add any OpenAI-compatible model & endpoint, making it easy to switch among Qwen, DeepSeek, Moonshot, OpenAI/Azure, and more.
 
 ---
 
@@ -58,7 +71,7 @@
 ### Prerequisites
 
 - [.NET 10.0 SDK](https://dotnet.microsoft.com/download) or higher
-- Alibaba Cloud DashScope API Key ([Get Here](https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key))
+- Any **OpenAI-compatible** API Key (examples: OpenAI/Azure OpenAI, Alibaba Cloud DashScope, DeepSeek, Moonshot, SiliconFlow, Together AI, etc.)
 
 ### Installation & Running
 
@@ -110,9 +123,9 @@ dotnet publish -c Release -r linux-x64 --self-contained true
 | Config | Description |
 |--------|-------------|
 | `Models` | Model list; the first entry is default and can be switched live in the Web UI |
-| `Models[].ApiKey` | Alibaba Cloud DashScope API Key |
-| `Models[].Model` | AI model to use (default: qwen3.5-plus) |
-| `Models[].Endpoint` | API endpoint URL |
+| `Models[].ApiKey` | Any OpenAI/compatible API Key (DashScope shown as an example) |
+| `Models[].Model` | AI model to use (default example: qwen3.5-plus; fill in DeepSeek/Moonshot/GPT, etc.) |
+| `Models[].Endpoint` | OpenAI-spec-compatible API endpoint URL |
 | `SudoPassword` | (Optional) Auto-privilege password for Linux/macOS |
 | `WebPort` | Web console port (default 5050) |
 
@@ -135,6 +148,8 @@ $env:SudoPassword=""
 ```
 
 > Environment variable names match the config keys (case-sensitive), handy for containers or temporary overrides.
+
+> The snippet above uses DashScope as an example. Replace `Model` and `Endpoint` with those from the OpenAI-compatible service you use (OpenAI/Azure, DeepSeek, Moonshot, etc.).
 
 ---
 
@@ -204,7 +219,7 @@ PiPiClaw/
 |-----------|------------|
 | **Runtime** | .NET 10.0 |
 | **Compilation** | AOT (Ahead-of-Time) Compilation |
-| **AI Model** | Alibaba Cloud Qwen (qwen3.5-plus) |
+| **AI Model** | OpenAI-spec-compatible LLMs (examples: Qwen, DeepSeek, Moonshot, OpenAI/Azure, etc.) |
 | **HTTP Client** | System.Net.Http |
 | **JSON Processing** | System.Text.Json |
 | **Encoding** | UTF-8 / GBK Auto-detection |
