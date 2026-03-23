@@ -115,6 +115,8 @@ string tasksPath = Path.Combine(recordsDir, "pi_scheduled_tasks.json");
 System.Collections.Concurrent.ConcurrentDictionary<string, List<ChatMessage>> userHistories = new();
 System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> userLocks = new();
 System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> userCts = new();
+System.Collections.Concurrent.ConcurrentDictionary<string, List<PushMsg>> userLiveStream = new();
+System.Collections.Concurrent.ConcurrentDictionary<string, Action<PushMsg>> userConnections = new();
 lock (tasksPath)
 {
     if (!File.Exists(tasksPath)) File.WriteAllText(tasksPath, "[]", Encoding.UTF8);
@@ -304,10 +306,18 @@ while (true)
 return;
 
 // ========================== 10. 核心 Agent 处理逻辑 ==========================
-async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, Action<string, string>? onUpdate = null, int modelIndex = 0, string username = "local")
+async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, int modelIndex = 0, string username = "local")
 {
     var userLock = userLocks.GetOrAdd(username, _ => new SemaphoreSlim(1, 1));
     await userLock.WaitAsync();
+    var liveStream = new List<PushMsg>();
+    userLiveStream[username] = liveStream;
+    Action<string, string> PushUpdate = (type, content) =>
+    {
+        var pm = new PushMsg { Type = type, Content = content };
+        lock (liveStream) liveStream.Add(pm);
+        if (userConnections.TryGetValue(username, out var conn)) conn(pm);
+    };
 
     var historyPath = Path.Combine(recordsDir, $"{username}_history.json");
     var history = GetHistory(username);
@@ -396,7 +406,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 cts.Cancel(); await animTask;
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine(CancelledMsg); Console.ResetColor();
-                onUpdate?.Invoke("final", CancelledMsg);
+                PushUpdate?.Invoke("final", CancelledMsg);
                 return CancelledMsg;
             }
             catch (Exception ex)
@@ -405,7 +415,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 Console.ForegroundColor = ConsoleColor.Red;
                 var err = $"\n[网络错误] 请求 API 失败: {ex.Message}";
                 Console.WriteLine(err); Console.ResetColor();
-                onUpdate?.Invoke("final", err);
+                PushUpdate?.Invoke("final", err);
                 return err;
             }
             var msg = JsonSerializer.Deserialize(responseString, AppJsonContext.Default.LlmResponse)?.Choices?.FirstOrDefault()?.Message;
@@ -458,7 +468,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         default: actionDesc = $"调用参数: {argsString}"; break;
                     }
                     Console.ResetColor();
-                    onUpdate?.Invoke("tool", $"[调用工具] {fnName}\n{actionDesc}");
+                    PushUpdate?.Invoke("tool", $"[调用工具] {fnName}\n{actionDesc}");
                     var result = "";
                     switch (fnName)
                     {
@@ -473,7 +483,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                 if (File.Exists(historyPath)) File.Delete(historyPath);
                             }
                             catch (Exception ex) { }
-                            onUpdate?.Invoke("clear_chat", "");
+                            PushUpdate?.Invoke("clear_chat", "");
                             Console.ForegroundColor = ConsoleColor.Green;
                             Console.WriteLine("[内部状态] Agent 判定任务结束，已预约清理上下文...");
                             Console.ResetColor();
@@ -488,7 +498,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                             }
                         case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
                         case "self_update": result = await SelfUpdate(); break;
-                        case "execute_command": result = RunCmd(GetStrProp(tempArgs, "command"), onUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
+                        case "execute_command": result = RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
                         default:
                             result = fnName switch
                             {
@@ -502,7 +512,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     }
                     if (fnName != "execute_command")
                     {
-                        onUpdate?.Invoke("tool_result", result);
+                        PushUpdate?.Invoke("tool_result", result);
                     }
                     var toolResultMsg = new ChatMessage
                     {
@@ -521,7 +531,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 Console.ResetColor();
                 Console.WriteLine($"\n{finalAIResponse}");
                 Console.ResetColor();
-                onUpdate?.Invoke("final", finalAIResponse);
+                PushUpdate?.Invoke("final", finalAIResponse);
                 isDone = true;
             }
         }
@@ -552,6 +562,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
     }
     finally
     {
+        userLiveStream.TryRemove(username, out _);
         userCts.TryRemove(username, out _);
         userLock.Release();
     }
@@ -720,7 +731,7 @@ string ReadPasswordHidden()
     Console.WriteLine();
     return pwd.ToString();
 }
-string RunCmd(string? cmd, Action<string, string>? onUpdate, bool isBackground = false, CancellationToken ct = default)
+string RunCmd(string? cmd, Action<string, string>? pushUpdate, bool isBackground = false, CancellationToken ct = default)
 {
     if (string.IsNullOrEmpty(cmd)) return "[执行失败] 命令为空";
     var isWin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -781,7 +792,7 @@ string RunCmd(string? cmd, Action<string, string>? onUpdate, bool isBackground =
             try { p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine(); p.WaitForExit(); }
             catch { }
             finally { if (!string.IsNullOrEmpty(askPassPath) && File.Exists(askPassPath)) try { File.Delete(askPassPath); } catch { } }
-        });
+        }, ct);
         return $"[已转入后台运行] 进程已在后台剥离启动: {cmd}。因为是后台任务，所以你将不会直接收到此命令的后续输出。如果需要知道运行状态，请通过其他命令（如 ps、curl 或检查日志文件）来验证。";
     }
     else
@@ -805,7 +816,7 @@ string RunCmd(string? cmd, Action<string, string>? onUpdate, bool isBackground =
             if (e.Data == null) return;
             Console.WriteLine(e.Data);
             outputBuilder.AppendLine(e.Data);
-            onUpdate?.Invoke("tool_result", e.Data);
+            pushUpdate?.Invoke("tool_result", e.Data);
         };
         p.ErrorDataReceived += (sender, e) =>
         {
@@ -814,7 +825,7 @@ string RunCmd(string? cmd, Action<string, string>? onUpdate, bool isBackground =
             Console.WriteLine(e.Data);
             Console.ResetColor();
             errorBuilder.AppendLine(e.Data);
-            onUpdate?.Invoke("tool_result", e.Data);
+            pushUpdate?.Invoke("tool_result", e.Data);
         };
         try
         {
@@ -1192,6 +1203,45 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"cleared\"}"));
                 break;
 
+            case "/api/attach" when req.HttpMethod == "POST":
+                bool isBusy = userLocks.TryGetValue(username, out var lck) && lck.CurrentCount == 0;
+                if (!isBusy)
+                {
+                    res.ContentType = "application/json";
+                    await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"idle\"}"));
+                    break;
+                }
+
+                res.ContentType = "text/plain; charset=utf-8";
+                res.SendChunked = true;
+                using (var attachWriter = new StreamWriter(res.OutputStream, new UTF8Encoding(false)))
+                {
+                    attachWriter.AutoFlush = true;
+                    userConnections[username] = (msg) => {
+                        try { attachWriter.Write(JsonSerializer.Serialize(msg, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
+                    };
+
+                    // 先把期间积攒的缓存推给刚上线的前端
+                    if (userLiveStream.TryGetValue(username, out var lst))
+                    {
+                        List<PushMsg> copy;
+                        lock (lst) copy = lst.ToList();
+                        foreach (var m in copy)
+                        {
+                            try { attachWriter.Write(JsonSerializer.Serialize(m, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
+                        }
+                    }
+
+                    // 保持连接不断开，直到任务彻底执行完毕释放锁
+                    while (userLocks.TryGetValue(username, out var lck2) && lck2.CurrentCount == 0)
+                    {
+                        await Task.Delay(1000);
+                        try { attachWriter.Write(" "); } catch { break; } // 用空格保活
+                    }
+                    userConnections.TryRemove(username, out _);
+                }
+                break;
+
             case "/api/chat":
                 using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
                 {
@@ -1204,22 +1254,18 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                     using var writer = new StreamWriter(res.OutputStream, new UTF8Encoding(false));
                     writer.AutoFlush = true;
 
-                    // 回调函数：将 AI 的状态实时推送给 Web 界面
-                    Action<string, string> onUpdate = (type, content) =>
+                    // 绑定当前的通信句柄
+                    userConnections[username] = (msg) =>
                     {
-                        try
-                        {
-                            var pushMsg = new PushMsg { Type = type, Content = content };
-                            writer.Write(JsonSerializer.Serialize(pushMsg, AppJsonContext.Default.PushMsg) + "|||END|||");
-                            writer.Flush();
-                        }
-                        catch { }
+                        try { writer.Write(JsonSerializer.Serialize(msg, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
                     };
 
                     if (chatReqObj != null)
                     {
-                        await RunAgent(chatReqObj.Message, false, onUpdate, chatReqObj.ModelIndex, username);
+                        // 去掉了老版本的 onUpdate 参数传递
+                        await RunAgent(chatReqObj.Message, false, chatReqObj.ModelIndex, username);
                     }
+                    userConnections.TryRemove(username, out _);
                 }
                 break;
 
@@ -2246,7 +2292,7 @@ string GetWebUIHtml()
                     <select id="modelSelect" class="model-select"></select>
                     <div class="loading-overlay" id="loadingOverlay" aria-live="polite">
                         <div class="loader-bars"><span></span><span></span><span></span></div>
-                        <span class="loader-text">正在深潜数据流...</span>
+                        <span class="loader-text">正在烹饪中...</span>
                     </div>
                 </div>
                 <div class="btn-col">
@@ -2296,7 +2342,7 @@ string GetWebUIHtml()
             <div class="collapse-body" id="configBody">
                 <div class="config-grid">
                     <div>
-                        <h3 style="font-size: 0.9em; color: var(--text-main); margin: 0 0 10px 0;">🔧 🤖大模型配置</h3>
+                        <h3 style="font-size: 0.9em; color: var(--text-main); margin: 0 0 10px 0;">🤖 大模型配置</h3>
                         <div
                             style="color:var(--text-muted); font-size:0.8em;">
                             ⚠️ 提示：端点地址 (Endpoint) 必须兼容 OpenAI API 格式。
@@ -2306,7 +2352,7 @@ string GetWebUIHtml()
                     <div id="modelsConfigContainer"></div>
                     <button type="button" class="btn-add-model" onclick="addModelConfigUI()">+ 添加一个新的模型节点配置</button>
                     <div style="margin-top: 20px; border-top: 1px dashed var(--glass-stroke); padding-top: 20px;">
-                        <h3 style="font-size: 0.9em; color: var(--text-main); margin: 0 0 10px 0;">📦 技能下载节点配置</h3>
+                        <h3 style="font-size: 0.9em; color: var(--text-main); margin: 0 0 10px 0;">📦 技能下载节点配置 <a href="https://www.clawhub.ai" target="_blank" style="float: right; display: inline-block; padding: 8px 18px; font-size: 14px; font-weight: 500; color: #1f2937; text-decoration: none; background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.6); border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); letter-spacing: 0.5px;">点我进入技能市场</a></h3>
                         <div style="color:var(--text-muted); font-size:0.75em; margin-bottom:15px;">
                           ⚠️ 提示：请使用 {slug} 作为技能名称的占位符。安装时将从上到下按顺序尝试。
                         </div>
@@ -2337,14 +2383,7 @@ string GetWebUIHtml()
     </div>
     <script>
         let currentUsername = localStorage.getItem('username') || '';
-        window.addEventListener('DOMContentLoaded', () => {
-            if(currentUsername) {
-                document.getElementById('userLoginOverlay').style.display = 'none';
-                loadConfig(); loadHistory();
-            } else {
-                document.getElementById('usernameInput').focus();
-            }
-        });
+
 
         function confirmUsername() {
             let val = document.getElementById('usernameInput').value.trim();
@@ -2710,90 +2749,164 @@ string GetWebUIHtml()
             try { await fetch('/api/cancel', { method: 'POST' }); } catch (e) { console.warn('[cancelTask] /api/cancel failed:', e); }
             setBusy(false);
         }
-        async function sendMsg() {
-            const input = document.getElementById('chatInput');
-            if (!input || input.disabled) return;
-            const text = (input.value || '').trim();
-            if (!text) return;
-            const chatBox = document.getElementById('chatBox');
-            chatBox.innerHTML += `<div class="msg user"><div class="msg-header">我</div><div class="msg-content">${escapeHtml(text)}</div></div>`;
-            input.value = '';
-            chatBox.scrollTop = chatBox.scrollHeight;
-            setBusy(true);
-            const uniqueId = 'ai_' + Date.now();
-            chatBox.innerHTML += `<div class="msg ai"><div class="msg-header">皮皮虾 // 工具</div><div class="msg-content" id="${uniqueId}"></div></div>`;
-            let contentBox = document.getElementById(uniqueId);
-            let currentTerminalBox = null;
-            currentAbortController = new AbortController();
-            const selectedModelIdx = parseInt(document.getElementById('modelSelect').value) || 0;
-            try {
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, modelIndex: selectedModelIdx }),
-                    signal: currentAbortController.signal
-                });
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const parts = buffer.split('|||END|||');
-                    buffer = parts.pop();
-                    for (const part of parts) {
-                        if (!part.trim()) continue;
-                        const data = JSON.parse(part.trim());
-                        if (data.type === 'clear_chat') {
-                            chatBox.innerHTML = '';
-                            chatBox.innerHTML += `
-<div class="msg ai">
-    <div class="msg-header">皮皮虾 // 任务完成</div>
-    <div class="msg-content" id="${uniqueId}">
-        <div style="color:var(--pipi-magenta); margin-bottom:10px; font-weight:bold;">
-✨ 历史上下文与网页记录已全自动清空！随时可以开始新任务。
-        </div>
-    </div>
-</div>`;
-                            contentBox = document.getElementById(uniqueId);
-                            currentTerminalBox = null;
-                            continue;
-                        }
-                        if (data.type === 'tool' || data.type === 'tool_result') {
-                            if (!currentTerminalBox) {
-                                currentTerminalBox = document.createElement('div');
-                                currentTerminalBox.className = 'exec-terminal';
-                                contentBox.appendChild(currentTerminalBox);
-                            }
-                            if (data.type === 'tool') currentTerminalBox.innerHTML += `<span class="log-action">>> ${escapeHtml(data.content)}</span>`;
-                            else currentTerminalBox.innerHTML += `<span class="log-result">${escapeHtml(data.content)}</span>`;
-                            currentTerminalBox.scrollTop = currentTerminalBox.scrollHeight;
-                        }
-                        if (data.type === 'final') {
-                            const finalWrap = document.createElement('div');
-                            finalWrap.style.marginTop = '12px';
-                            contentBox.appendChild(finalWrap);
-                            const rawText = String(data.content ?? '');
-                            finalWrap.innerHTML = marked.parse(rawText);
 
-                            chatBox.scrollTop = chatBox.scrollHeight;
-                        }
 
-                        chatBox.scrollTop = chatBox.scrollHeight;
+
+
+        // 统一的流数据解析器
+async function processStream(response, contentBoxId) {
+    const chatBox = document.getElementById('chatBox');
+    let contentBox = document.getElementById(contentBoxId);
+    let currentTerminalBox = null;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split('|||END|||');
+            buffer = parts.pop();
+            for (const part of parts) {
+                const t = part.trim();
+                if (!t) continue;
+                try {
+                    const data = JSON.parse(t);
+                    if (data.type === 'clear_chat') {
+                        chatBox.innerHTML = `
+                        <div class="msg ai">
+                            <div class="msg-header">皮皮虾 // 任务完成</div>
+                            <div class="msg-content" id="${contentBoxId}">
+                                <div style="color:var(--pipi-magenta); margin-bottom:10px; font-weight:bold;">
+                                ✨ 历史上下文与网页记录已全自动清空！随时可以开始新任务。
+                                </div>
+                            </div>
+                        </div>`;
+                        contentBox = document.getElementById(contentBoxId);
+                        currentTerminalBox = null;
+                        continue;
                     }
-                }
-            } catch (e) {
-                if (e?.name !== 'AbortError') {
-                    const errWrap = document.createElement('div');
-                    errWrap.style.cssText = 'margin-top:8px; color:var(--pipi-magenta); font-size:0.85em;';
-                    errWrap.textContent = '[连接中断]';
-                    contentBox.appendChild(errWrap);
-                }
-            } finally {
-                setBusy(false);
+                    if (data.type === 'tool' || data.type === 'tool_result') {
+                        currentTerminalBox = contentBox.querySelector('.exec-terminal');
+                        if (!currentTerminalBox) {
+                            currentTerminalBox = document.createElement('div');
+                            currentTerminalBox.className = 'exec-terminal';
+                            contentBox.appendChild(currentTerminalBox);
+                        }
+                        if (data.type === 'tool') currentTerminalBox.innerHTML += `<span class="log-action">&gt;&gt; ${escapeHtml(data.content)}</span>`;
+                        else currentTerminalBox.innerHTML += `<span class="log-result">${escapeHtml(data.content)}</span>`;
+                        currentTerminalBox.scrollTop = currentTerminalBox.scrollHeight;
+                    }
+                    if (data.type === 'final') {
+                        const finalWrap = document.createElement('div');
+                        finalWrap.style.marginTop = '12px';
+                        contentBox.appendChild(finalWrap);
+                        finalWrap.innerHTML = marked.parse(String(data.content ?? ''));
+                    }
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                } catch(e) {}
             }
         }
+    } catch(e) {
+        if (e && e.name !== 'AbortError') {
+            const errWrap = document.createElement('div');
+            errWrap.style.cssText = 'margin-top:8px; color:var(--pipi-magenta); font-size:0.85em;';
+            errWrap.textContent = '[连接中断]';
+            contentBox.appendChild(errWrap);
+        }
+    } finally {
+        setBusy(false);
+    }
+} 
+
+async function sendMsg() {
+    const input = document.getElementById('chatInput');
+    if (!input || input.disabled) return;
+    const text = (input.value || '').trim();
+    if (!text) return;
+    const chatBox = document.getElementById('chatBox');
+    chatBox.innerHTML += `<div class="msg user"><div class="msg-header">我</div><div class="msg-content">${escapeHtml(text)}</div></div>`;
+    input.value = '';
+    chatBox.scrollTop = chatBox.scrollHeight;
+    setBusy(true);
+    const uniqueId = 'ai_' + Date.now();
+    chatBox.innerHTML += `<div class="msg ai"><div class="msg-header">皮皮虾 // 工具</div><div class="msg-content" id="${uniqueId}"></div></div>`;
+    currentAbortController = new AbortController();
+    const selectedModelIdx = parseInt(document.getElementById('modelSelect').value) || 0;
+    try {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, modelIndex: selectedModelIdx }),
+            signal: currentAbortController.signal
+        });
+        await processStream(response, uniqueId);
+    } catch(e) {
+        setBusy(false);
+    }
+}
+
+// 核心重连吸附功能
+async function checkStatusAndAttach() {
+    try {
+        const res = await fetch('/api/attach', { method: 'POST' });
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            return; // 处于空闲状态，不需要重连
+        }
+
+        // 处于繁忙状态，准备吸附数据流
+        setBusy(true);
+
+        // 核心修改：直接抓取页面上最后一次 AI 的对话框内容区
+        const aiContents = document.querySelectorAll('.msg.ai .msg-content');
+        let targetId;
+
+        if (aiContents.length > 0) {
+            // 直接拿最后一个框的 ID
+            targetId = aiContents[aiContents.length - 1].id;
+        } else {
+            // 极端情况保底：如果被清空了真的没历史记录，才新建一个
+            targetId = 'ai_live_' + Date.now();
+            document.getElementById('chatBox').insertAdjacentHTML('beforeend', 
+                `<div class="msg ai"><div class="msg-header">皮皮虾 // 工具</div><div class="msg-content" id="${targetId}"></div></div>`
+            );
+        }
+
+        currentAbortController = new AbortController();
+
+        // 把流直接怼进目标 ID 的框里
+        await processStream(res, targetId);
+    } catch (e) {
+        console.warn("Attach failed", e);
+    }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    if(currentUsername) {
+        document.getElementById('userLoginOverlay').style.display = 'none';
+        loadConfig();
+        // 加载完固化的历史记录后，紧接着探针检查是否需要吸附后台的进行中任务
+        loadHistory().then(checkStatusAndAttach);
+    } else {
+        document.getElementById('usernameInput').focus();
+    }
+});
+
+function confirmUsername() {
+    let val = document.getElementById('usernameInput').value.trim();
+    if(!val) return alert("用户名不能为空！");
+    currentUsername = val;
+    localStorage.setItem('username', val);
+    document.getElementById('userLoginOverlay').style.display = 'none';
+    loadConfig();
+    loadHistory().then(checkStatusAndAttach);
+}
+
+
+
+
         async function loadHistory() {
             try {
                 const res = await fetch('/api/history');
@@ -2854,7 +2967,6 @@ string GetWebUIHtml()
             }
         }
         loadConfig();
-        loadHistory();
     </script>
 </body>
 </html>
