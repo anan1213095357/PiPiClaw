@@ -24,7 +24,7 @@
     
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <StripSymbols>false</StripSymbols>
+    <StripSymbols>true</StripSymbols>
 
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
 

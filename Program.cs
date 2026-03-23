@@ -106,45 +106,33 @@ string sudoInstruction = isWin
     ? "如果遇到权限拒绝，请使用 PowerShell 的 PSCredential 结合 Start-Process -Verb RunAs 尝试执行，或者直接提示用户关闭控制台，以【管理员身份运行】重新打开本程序。千万不要使用 sudo 命令。"
     : "如果遇到提权(Permission denied)，请直接使用 sudo 命令。系统会在底层按需拦截并向用户索要密码，你无需关心密码输入环节。";
 // ========================== 5. 核心状态变量与网络请求初始化 ==========================
-string checkpointPath = "pi_history.json";
-string tasksPath = "pi_scheduled_tasks.json";
-List<ChatMessage> fullHistory = new();
+string recordsDir = Path.Combine(AppContext.BaseDirectory, "Records");
+if (!Directory.Exists(recordsDir)) Directory.CreateDirectory(recordsDir);
+
+string tasksPath = Path.Combine(recordsDir, "pi_scheduled_tasks.json");
+
+// 移除单一的全局变量，改为多用户并发字典
+System.Collections.Concurrent.ConcurrentDictionary<string, List<ChatMessage>> userHistories = new();
+System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> userLocks = new();
+System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> userCts = new();
 lock (tasksPath)
 {
     if (!File.Exists(tasksPath)) File.WriteAllText(tasksPath, "[]", Encoding.UTF8);
 }
-// 尝试恢复上次任务（自动继续，不再询问）
-if (File.Exists(checkpointPath))
+List<ChatMessage> GetHistory(string user)
 {
-    try
+    if (userHistories.TryGetValue(user, out var h)) return h;
+    var path = Path.Combine(recordsDir, $"{user}_history.json");
+    var list = new List<ChatMessage>();
+    if (File.Exists(path))
     {
-        var savedState = JsonSerializer.Deserialize(File.ReadAllText(checkpointPath, Encoding.UTF8), AppJsonContext.Default.ListChatMessage);
-        if (savedState != null)
-        {
-            fullHistory = savedState;
-
-            // 【核心修复】检测并清理上一次因为卡死强退导致的历史污染
-            var lastMsg = fullHistory.LastOrDefault();
-            if (lastMsg != null && lastMsg.Role == "assistant" && lastMsg.ToolCalls != null && lastMsg.ToolCalls.Count > 0)
-            {
-                // 如果最后一条是工具调用，且没有结果，说明程序在这里被异常中断了
-                lastMsg.ToolCalls = null; // 剥离工具调用，防止 400 报错
-                if (string.IsNullOrEmpty(lastMsg.Content))
-                {
-                    lastMsg.Content = "[系统提示：该任务在上次运行中因进程卡死或被强杀而异常中断]";
-                }
-            }
-        }
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("\n[PiPiClaw] 发现上次未完成的任务存档，已自动恢复上下文！\n");
-        Console.ResetColor();
+        try { list = JsonSerializer.Deserialize(File.ReadAllText(path, Encoding.UTF8), AppJsonContext.Default.ListChatMessage) ?? new(); } catch { }
     }
-    catch { File.Delete(checkpointPath); }
+    userHistories[user] = list;
+    return list;
 }
 using var client = new HttpClient();
 client.Timeout = TimeSpan.FromMinutes(10);
-var agentLock = new SemaphoreSlim(1, 1);
-CancellationTokenSource? currentTaskCts = null;
 const string CancelledMsg = "\n[任务已取消]";
 bool selfUpdateRequested = false;
 // ========================== 6. 启动后台服务 (调度 + WebUI) ==========================
@@ -316,9 +304,14 @@ while (true)
 return;
 
 // ========================== 10. 核心 Agent 处理逻辑 ==========================
-async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, Action<string, string>? onUpdate = null, int modelIndex = 0)
+async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, Action<string, string>? onUpdate = null, int modelIndex = 0, string username = "local")
 {
-    await agentLock.WaitAsync();
+    var userLock = userLocks.GetOrAdd(username, _ => new SemaphoreSlim(1, 1));
+    await userLock.WaitAsync();
+
+    var historyPath = Path.Combine(recordsDir, $"{username}_history.json");
+    var history = GetHistory(username);
+
     var currentModelCfg = (GlobalConfig.Models != null && GlobalConfig.Models.Count > modelIndex)
         ? GlobalConfig.Models[modelIndex]
         : (GlobalConfig.Models?.FirstOrDefault() ?? new ModelConfig());
@@ -326,15 +319,15 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
     var activeEndpoint = !string.IsNullOrEmpty(currentModelCfg.Endpoint) ? currentModelCfg.Endpoint : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     var activeApiKey = currentModelCfg.ApiKey;
     using var taskCts = new CancellationTokenSource();
-    currentTaskCts = taskCts;
+    userCts[username] = taskCts;
     string finalAIResponse = "";
     try
     {
         var useFullContext = false;
         var requireReset = false;
         var userMsg = new ChatMessage { Role = "user", Content = inputMessage };
-        fullHistory.Add(userMsg.DeepClone());
-        SaveData(fullHistory, checkpointPath);
+        history.Add(userMsg.DeepClone());
+        SaveData(history, historyPath);
         var isDone = false;
         while (!isDone)
         {
@@ -364,21 +357,21 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             IEnumerable<ChatMessage> recentMessages;
             if (useFullContext)
             {
-                recentMessages = fullHistory;
+                recentMessages = history;
             }
             else
             {
                 var seenUser = 0;
                 var startIndex = 0;
-                for (var i = fullHistory.Count - 1; i >= 0; i--)
+                for (var i = history.Count - 1; i >= 0; i--)
                 {
-                    if (fullHistory[i].Role != "user") continue;
+                    if (history[i].Role != "user") continue;
                     seenUser++;
                     if (seenUser <= 3) continue;
                     startIndex = i + 1;
                     break;
                 }
-                recentMessages = fullHistory.Skip(startIndex);
+                recentMessages = history.Skip(startIndex);
             }
             foreach (var m in recentMessages) payloadMessages.Add(m.DeepClone());
             var payload = new LlmRequest
@@ -430,8 +423,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             cts.Cancel();
             await animTask;
             if (msg == null) break;
-            fullHistory.Add(msg.DeepClone());
-            SaveData(fullHistory, checkpointPath);
+            history.Add(msg.DeepClone());
+            SaveData(history, historyPath);
             var toolCalls = msg.ToolCalls;
             if (toolCalls != null && toolCalls.Count > 0)
             {
@@ -476,9 +469,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                             result = "[系统提示] 上下文清理已预约，这将在你给出最后一句回复后执行。请现在用正常的自然语言向用户总结任务完成情况。";
                             try
                             {
-                                var fullPath = Path.Combine(AppContext.BaseDirectory, checkpointPath);
-                                if (File.Exists(fullPath)) File.Delete(fullPath);
-
+                                // 直接删当前用户的历史记录文件，historyPath 已经是完整路径了
+                                if (File.Exists(historyPath)) File.Delete(historyPath);
                             }
                             catch (Exception ex) { }
                             onUpdate?.Invoke("clear_chat", "");
@@ -519,8 +511,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         Content = result,
                         ToolCallId = call.Id
                     };
-                    fullHistory.Add(toolResultMsg.DeepClone());
-                    SaveData(fullHistory, checkpointPath);
+                    history.Add(toolResultMsg.DeepClone());
+                    SaveData(history, historyPath);
                 }
             }
             else
@@ -535,10 +527,10 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
         }
         if (requireReset)
         {
-            fullHistory.Clear();
-            if (File.Exists(checkpointPath)) File.Delete(checkpointPath);
+            history.Clear();
+            if (File.Exists(historyPath)) File.Delete(historyPath);
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("\n✅ [生命周期] 本次任务上下文已全自动清理！PiPiClaw 已就绪，随时接收新任务。");
+            Console.WriteLine($"\n✅ [生命周期] 用户 {username} 的任务上下文已全自动清理！随时接收新任务。");
             Console.ResetColor();
         }
         if (selfUpdateRequested)
@@ -560,8 +552,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
     }
     finally
     {
-        currentTaskCts = null;
-        agentLock.Release();
+        userCts.TryRemove(username, out _);
+        userLock.Release();
     }
     return finalAIResponse;
 }
@@ -1115,6 +1107,8 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
     res.Headers.Add("Access-Control-Allow-Origin", "*");
     res.Headers.Add("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     res.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+    var username = req.Headers["X-Username"];
+    if (string.IsNullOrWhiteSpace(username)) username = "WebUser";
     try
     {
         if (req.HttpMethod == "OPTIONS")
@@ -1182,19 +1176,14 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
 
             // --- 中断当前 AI 任务 ---
             case "/api/cancel":
-                currentTaskCts?.Cancel();
+                if (userCts.TryGetValue(username, out var cts)) cts.Cancel();
                 res.ContentType = "application/json";
                 await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"cancelled\"}"));
                 break;
 
             case "/api/clear" when req.HttpMethod == "POST":
-                fullHistory.Clear();
-                try
-                {
-                    var fullPath = Path.Combine(AppContext.BaseDirectory, checkpointPath);
-                    if (File.Exists(fullPath)) File.Delete(fullPath);
-                }
-                catch { }
+                GetHistory(username).Clear();
+                try { File.Delete(Path.Combine(recordsDir, $"{username}_history.json")); } catch { }
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("\n✅ [生命周期] 用户已手动清理上下文！PiPiClaw 已就绪。");
                 Console.ResetColor();
@@ -1229,15 +1218,14 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
 
                     if (chatReqObj != null)
                     {
-                        // 注意：RunAgent 内部依然受 agentLock 限制，会排队，但不会卡死 Web 访问
-                        await RunAgent(chatReqObj.Message, false, onUpdate, chatReqObj.ModelIndex);
+                        await RunAgent(chatReqObj.Message, false, onUpdate, chatReqObj.ModelIndex, username);
                     }
                 }
                 break;
 
             // --- 历史记录 ---
             case "/api/history":
-                string historyJson = JsonSerializer.Serialize(fullHistory, AppJsonContext.Default.ListChatMessage);
+                string historyJson = JsonSerializer.Serialize(GetHistory(username), AppJsonContext.Default.ListChatMessage);
                 res.ContentType = "application/json";
                 byte[] hBytes = Encoding.UTF8.GetBytes(historyJson);
                 await res.OutputStream.WriteAsync(hBytes, 0, hBytes.Length);
@@ -2015,6 +2003,14 @@ string GetWebUIHtml()
             overflow-y: auto;  /* 任务多了自动出滚动条 */
             padding-right: 6px;
         }
+        #userLoginOverlay {
+            position: fixed; inset: 0; background: var(--bg-depth); z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .login-box {
+            background: var(--glass-surface); padding: 30px; border-radius: 16px;
+            border: 1px solid var(--pipi-cyan); text-align: center;
+        }
         @media (max-width:600px) {
             :root {
                 font-size: 15px;
@@ -2208,6 +2204,13 @@ string GetWebUIHtml()
     </style>
 </head>
 <body>
+    <div id="userLoginOverlay">
+        <div class="login-box">
+            <h2 style="color:var(--pipi-cyan);">请输入用户名</h2>
+            <input type="text" id="usernameInput" placeholder="例如：楠哥" style="margin-bottom:15px;"/>
+            <button class="btn-submit" onclick="confirmUsername()">进入系统</button>
+        </div>
+    </div>
     <div id="qrcode-container" title="手机扫码中控">
         <div id="qrcode"></div>
         <span>手机扫码打开这个界面</span>
@@ -2333,6 +2336,36 @@ string GetWebUIHtml()
         </div>
     </div>
     <script>
+        let currentUsername = localStorage.getItem('username') || '';
+        window.addEventListener('DOMContentLoaded', () => {
+            if(currentUsername) {
+                document.getElementById('userLoginOverlay').style.display = 'none';
+                loadConfig(); loadHistory();
+            } else {
+                document.getElementById('usernameInput').focus();
+            }
+        });
+
+        function confirmUsername() {
+            let val = document.getElementById('usernameInput').value.trim();
+            if(!val) return alert("用户名不能为空！");
+            currentUsername = val;
+            localStorage.setItem('username', val);
+            document.getElementById('userLoginOverlay').style.display = 'none';
+            loadConfig(); loadHistory(); // 此时再加载历史记录
+        }
+
+        // 覆盖原生 fetch，给所有 api 请求自动带上 X-Username
+        const originalFetch = window.fetch;
+        window.fetch = async function() {
+            let [resource, config] = arguments;
+            if(resource.includes('/api/')) {
+                config = config || {};
+                config.headers = config.headers || {};
+                config.headers['X-Username'] = encodeURIComponent(currentUsername);
+            }
+            return originalFetch(resource, config);
+        };
         const LOGO_DATA_URL = "{{LOGO_DATA_URL}}";
         document.querySelectorAll('.logo-mark, .logo-badge').forEach(img => { img.src = LOGO_DATA_URL; });
         function toggleTheme() {
