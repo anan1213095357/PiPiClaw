@@ -1346,7 +1346,7 @@ string GetWebUIHtml()
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="color-scheme" content="light dark" />
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <title>PiPiClaw // SkillHub Ready C&amp;C Terminal v3.0</title>
+    <title>PiPiClaw</title>
     <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <script>
         if (localStorage.getItem('theme') === 'light') {
