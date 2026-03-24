@@ -11,7 +11,7 @@
 ![Version](https://img.shields.io/badge/Version-v1.0.0-orange?style=flat-square)
 ![Size](https://img.shields.io/badge/Package%20Size-~2MB-brightgreen?style=flat-square)
 
-**Let AI be your all-round copilot — natively connected to 10,000+ Skill-Hub ecosystem skills**
+**Let AI be your all-round copilot — natively connected to 10,000+ Skill-Hub ecosystem skills, with multi-agent collaboration support**
 
 **🌐 Language | 语言切换:** [English](README_EN.md) | [中文](README.md)
 
@@ -27,6 +27,7 @@
 
 - Beyond DevOps: a full-spectrum local agent that can orchestrate development, automation, data handling, knowledge search, and more.
 - Native Skill-Hub integration lets you search and install 10,000+ ecosystem skills with one click to expand capabilities without limits.
+- **Multi-Agent Collaboration**: Multiple PiPiClaw instances can communicate and work together, forming a true AI company — each agent takes a dedicated role and collaborates as a team to handle complex tasks.
 
 > Recommended setup: run `dotnet run` directly in the terminal and follow the first-run guide to set your API Key, model, and the Web console (any OpenAI-compatible provider works). You can also publish a self-contained AOT build (`dotnet publish -c Release -r win-x64|osx-x64|linux-x64 --self-contained true`) and run it instantly on macOS, Linux, or Windows (including WSL2). New installations can start with the “Quick Start” section below.
 
@@ -63,6 +64,7 @@
 | 🌐 **Web Console** | Built-in lightweight Web UI (port 5050) for remote browser control |
 | 🧠 **Memory Management** | Multi-turn conversation context memory, auto-cleanup after task completion to save tokens |
 | 🔐 **Permission Handling** | Smart sudo privilege interception with automatic password handling (non-Windows) |
+| 🤝 **Multi-Agent Collaboration** | Multiple PiPiClaw instances can interconnect and cooperate, forming an AI company to accomplish complex tasks together |
 
 ---
 
@@ -237,6 +239,32 @@ PiPiClaw/
 - ✅ **Error Handling** - Comprehensive exception capture and prompts
 - ✅ **Secure Configuration** - API Key separated from code, supports environment variables
 - ✅ **Log Compression** - Auto-fold similar log lines to save tokens
+- ✅ **Multi-Agent Collaboration** - Multiple PiPiClaw instances interconnect to form an AI company working in concert
+
+---
+
+## 🤝 Multi-Agent Collaboration (AI Company Mode)
+
+PiPiClaw now supports interconnection between multiple instances, letting your AI assistants truly form an **AI Company**.
+
+**How it works:**
+- Each PiPiClaw instance runs independently on its own machine (or port), with its own Web console and skill set.
+- Agents can call each other via HTTP interfaces, delegating sub-tasks to other instances to achieve cross-machine / cross-process collaboration.
+- You can spin up multiple instances with specialized roles — for example: one for software development, one for ops, one for data analysis — forming a complete AI workflow pipeline.
+
+**Quick start with multiple agents:**
+
+```bash
+# Terminal 1: Start the first PiPiClaw (default port 5050)
+WebPort=5050 dotnet run
+
+# Terminal 2: Start the second PiPiClaw (different port)
+WebPort=5051 dotnet run
+```
+
+Then instruct one agent to call another agent's Web interface via HTTP tool calls to enable inter-agent dialogue and task delegation.
+
+> 💡 **Tip**: Multiple instances can run on different ports of the same machine, or be distributed across different devices on a LAN, interconnecting via IP + port.
 
 ---
 
