@@ -69,7 +69,8 @@ var toolsDoc = JsonDocument.Parse("""
     { "type": "function", "function": { "name": "add_scheduled_task", "description": "添加定时或延时任务。系统底层的C#引擎会绝对接管时间调度，绝不能在任务执行时由AI去动态补加下一次任务。", "parameters": { "type": "object", "properties": { "execute_at": { "type": "string", "description": "首次执行时间，严格遵循 ISO 8601 格式，例如 '2026-03-20T14:30:00+08:00'" }, "user_intent": { "type": "string", "description": "到达时间时，大模型需要执行的具体任务要求和背景" }, "interval_minutes": { "type": "integer", "description": "可选。如果是周期性任务，请设置此周期间隔（分钟数）。例如每天执行则设为 1440。如果不填或为 0，则仅执行一次。系统会在底层自动无限循环，无需AI干预。" } }, "required": ["execute_at", "user_intent"] } } },
     { "type": "function", "function": { "name": "remove_scheduled_task", "description": "删除指定的定时或延时任务。", "parameters": { "type": "object", "properties": { "task_id": { "type": "string", "description": "要删除的任务ID（从任务列表中获取）" } }, "required": ["task_id"] } } },
     { "type": "function", "function": { "name": "install_skill", "description": "安装 单个 Skill-hub 或者 从第三方的技能，并根据包含的 MD 文件自动了解对接方式。", "parameters": { "type": "object", "properties": { "slug": { "type": "string", "description": "技能列表中的slug字段只需传入这个字段即可" } }, "required": ["slug"] } } },
-    { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } }
+    { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } },
+    { "type": "function", "function": { "name": "delegate_task", "description": "向局域网或公网上的其他皮皮虾节点指派任务或请求协作。你可以从系统提示词的【友军通讯录】中查找对方的名字和 URL。调用此工具后，当前进程会阻塞等待对方执行完毕并拿到最终结果。", "parameters": { "type": "object", "properties": { "target_url": { "type": "string", "description": "目标节点的完整 HTTP 基础地址，包含端口号，例如 'http://192.168.1.100:5050'" }, "task_message": { "type": "string", "description": "你要交办的具体任务内容、上下文背景或询问的问题" } }, "required": ["target_url", "task_message"] } } }
 ]
 """);
 //在没有找到合适的  搜索 api 之前先注释
@@ -348,29 +349,36 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             {
                 lock (tasksPath) { try { currentTasksJson = File.ReadAllText(tasksPath, Encoding.UTF8); } catch { } }
             }
-
+            var peersStr = (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.Count > 0)
+                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】: {p.Value}"))
+                : "暂无已知友军节点";
+            
             var customPrompt = !string.IsNullOrWhiteSpace(GlobalConfig.SystemPrompt) 
                 ? GlobalConfig.SystemPrompt 
-                : "你是一个全能智能 Agent，代号 PiPiClaw (皮皮虾)。你的使命：以本地优先、安全可审计的方式完成用户提出的任何任务，不限于运维/开发/数据/知识检索。你可随时通过 Skill-Hub 搜索或安装一万+ 生态技能扩展能力。";
+                : "你是一个全能智能 Agent，代号 PiPiClaw (皮皮虾)。你的使命：以本地优先、安全可审计的方式完成用户提出的任何任务，不限于运维/开发/数据/知识检索。你可随时通过 Skill-Hub 安装技能扩展能力。";
 
-            var systemPromptText = $"""
-                                    {customPrompt}
+            var systemPromptText = $$"""
+                                     {{customPrompt}}
 
-                                    【当前环境状态】
-                                    当前系统：{RuntimeInformation.OSDescription}。当前时间是 {DateTimeOffset.Now:yyyy-MM-ddTHH:mm:sszzz}。
-                                    {sudoInstruction}
+                                     【当前环境状态】
+                                     当前系统：{{RuntimeInformation.OSDescription}}。当前时间是 {{DateTimeOffset.Now:yyyy-MM-ddTHH:mm:sszzz}}。
+                                     {{sudoInstruction}}
 
-                                    【记忆管理架构】：
-                                    1. 为节省Token，你的短时记忆默认只保留最近几次的对话记录。
-                                    2. 当任务彻底完成时调用 finish_task 清理环境。
-                                    3. [技能调用策略] 下方列表包含了本地已安装的技能和简短摘要。当用户的需求需要用到某个技能时，你必须先调用 read_file 工具，读取该技能目录下的 skill.md 文件以获取完整的对接文档，然后再根据文档指导进行下一步操作。绝对不要凭空猜测调用方式！
+                                     【记忆管理架构】：
+                                     1. 为节省Token，你的短时记忆默认只保留最近几次的对话记录。
+                                     2. 当任务彻底完成时调用 finish_task 清理环境。
+                                     3. [技能调用策略] 下方列表包含了本地已安装的技能和简短摘要。当用户的需求需要用到某个技能时，你必须先调用 read_file 工具，读取该技能目录下的 skill.md 文件以获取完整的对接文档，然后再根据文档指导进行下一步操作。绝对不要凭空猜测调用方式！
+                                     
+                                     【友军通讯录 (Peer Nodes)】：
+                                      当用户让你安排任务给其他节点（如树莓派、NAS等）时，请直接从下方列表中查找对应的目标 URL，并调用 delegate_task 工具：
+                                      {{peersStr}}
+                                      
+                                     【PiPiClaw 挂起的定时任务（包含 task_id，供你管理任务时参考）】：
+                                     {{currentTasksJson}}
 
-                                    【PiPiClaw 挂起的定时任务（包含 task_id，供你管理任务时参考）】：
-                                    {currentTasksJson}
-
-                                    【本地已安装的扩展技能及绝对路径说明】：
-                                    {GetInstalledSkillsContext()}
-                                    """;
+                                     【本地已安装的扩展技能及绝对路径说明】：
+                                     {{GetInstalledSkillsContext()}}
+                                     """;
             var payloadMessages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPromptText } };
             IEnumerable<ChatMessage> recentMessages;
             if (useFullContext)
@@ -473,6 +481,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         case "read_file": actionDesc = $"正在读取文件: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         case "write_file": actionDesc = $"正在写入文件: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         case "search_content": actionDesc = $"全局搜索关键字: {GetStrProp(tempArgs, "keyword")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                        case "delegate_task": actionDesc = $"正在跨节点呼叫友军: {GetStrProp(tempArgs, "target_url")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         default: actionDesc = $"调用参数: {argsString}"; break;
                     }
                     Console.ResetColor();
@@ -507,6 +516,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
                         case "self_update": result = await SelfUpdate(); break;
                         case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
+                        case "delegate_task": result = await DelegateTaskAsync(GetStrProp(tempArgs, "target_url"), GetStrProp(tempArgs, "task_message")); break;
                         default:
                             result = fnName switch
                             {
@@ -934,6 +944,30 @@ string SearchContent(string? dir, string? keyword, string? pattern)
     }
     catch (Exception ex) { return $"[异常] {ex.Message}"; }
 }
+async Task<string> DelegateTaskAsync(string targetUrl, string taskMessage)
+{
+    if (string.IsNullOrEmpty(targetUrl) || string.IsNullOrEmpty(taskMessage)) 
+        return "[委派失败] 目标地址或任务内容为空。";
+        
+    try
+    {
+        var reqUrl = targetUrl.TrimEnd('/') + "/api/agent_task";
+        var reqBody = new ChatReq { Message = taskMessage, ModelIndex = 0 };
+        var jsonBody = JsonSerializer.Serialize(reqBody, AppJsonContext.Default.ChatReq);
+        using var request = new HttpRequestMessage(HttpMethod.Post, reqUrl);
+        request.Headers.Add("X-Username", $"PeerAgent_{Guid.NewGuid().ToString("N").Substring(0, 6)}");
+        request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        
+        var result = await response.Content.ReadAsStringAsync();
+        return $"[友军 {targetUrl} 执行完毕并返回了以下结果]:\n{result}";
+    }
+    catch (Exception ex)
+    {
+        return $"[委派通信异常] 无法连接到节点或对方执行出错: {ex.Message}";
+    }
+}
 async Task<string> InstallSkill(string? slug)
 {
     if (string.IsNullOrEmpty(slug)) return "❌ slug不能为空";
@@ -1289,7 +1323,22 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 byte[] hBytes = Encoding.UTF8.GetBytes(historyJson);
                 await res.OutputStream.WriteAsync(hBytes, 0, hBytes.Length);
                 break;
-
+            
+            // --- 接收友军皮皮虾的任务指派 ---
+            case "/api/agent_task" when req.HttpMethod == "POST":
+                using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+                {
+                    var body = await reader.ReadToEndAsync();
+                    var chatReqObj = JsonSerializer.Deserialize(body, AppJsonContext.Default.ChatReq);
+                    if (chatReqObj != null)
+                    {
+                        var responseText = await RunAgent($"[收到其他节点的友军指派任务，请务必完成] {chatReqObj.Message}", false, chatReqObj.ModelIndex, username);
+                        res.ContentType = "text/plain; charset=utf-8";
+                        var respBytes = Encoding.UTF8.GetBytes(responseText);
+                        await res.OutputStream.WriteAsync(respBytes, 0, respBytes.Length);
+                    }
+                }
+                break;
             default:
                 res.StatusCode = 404;
                 break;
@@ -1509,24 +1558,28 @@ string GetWebUIHtml()
             animation: slideDown .6s ease-out;
             gap: 12px;
         }
-        .header h1 {
-            font-size: 2.4em;
-            font-weight: 800;
-            margin: 0;
-            letter-spacing: 2px;
-            background: linear-gradient(120deg, var(--pipi-cyan), var(--pipi-magenta));
-            background-size: 200% auto;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .1));
-            animation: shineText 8s ease infinite;
-            display: inline-flex;
-            align-items: center;
-            gap: 12px;
-            justify-content: center;
-            flex: 1;
-            text-align: center;
-        }
+       .header h1 {
+    font-size: 2.4em;
+    font-weight: 800;
+    margin: 0;
+    letter-spacing: 2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: center;
+    flex: 1;
+    text-align: center;
+    /* 解决层级和投影冲突，投影移到伪元素或父级处理更安全，这里先去掉了导致 bug 的 drop-shadow */
+}
+
+.header h1 span {
+    background: linear-gradient(120deg, var(--pipi-cyan), var(--pipi-magenta));
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    /* 这里同时绑定流光 shineText 和 抖动 glitch 特效 */
+    animation: shineText 8s ease infinite, glitch 5s infinite;
+}
         .header p {
             color: var(--text-muted);
             font-size: .9em;
@@ -2288,6 +2341,123 @@ string GetWebUIHtml()
 .footer-attribution .divider {
     color: var(--glass-stroke);
 }
+/* ==================== 关于面板专属样式 ==================== */
+.about-content {
+    text-align: center;
+    padding: 15px 0 5px 0;
+}
+.about-badges {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 18px 0;
+}
+.about-badge {
+    background: linear-gradient(135deg, #10b981, #059669); /* 强调绿色的极简感 */
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 800;
+    box-shadow: 0 6px 15px rgba(16, 185, 129, 0.25);
+    letter-spacing: 1px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.about-badge.usb {
+    background: linear-gradient(135deg, var(--pipi-cyan), #0284c7);
+    box-shadow: 0 6px 15px rgba(2, 132, 199, 0.25);
+}
+.about-desc {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    line-height: 1.7;
+    margin: 15px 0;
+    background: rgba(0,0,0,0.1);
+    padding: 15px;
+    border-radius: 12px;
+    border: 1px dashed var(--glass-stroke);
+}
+[data-theme="light"] .about-desc {
+    background: rgba(255,255,255,0.5);
+}
+.about-links {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 25px;
+}
+.btn-about-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 12px;
+    text-decoration: none;
+    font-weight: 800;
+    font-size: 0.95em;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    letter-spacing: 1px;
+}
+.btn-github {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-stroke);
+    color: var(--text-main);
+}
+.btn-github:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 8px 20px var(--shadow-color);
+}
+.btn-qq {
+    background: linear-gradient(135deg, #00a4ff, #0088cc);
+    color: white !important;
+    border: none;
+    box-shadow: 0 6px 20px rgba(0, 164, 255, 0.3);
+}
+.btn-qq:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 8px 25px rgba(0, 164, 255, 0.45);
+}
+/* --- 加群二维码专属样式 --- */
+.qq-qr-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-top: 15px;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed var(--glass-stroke);
+    border-radius: 14px;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s, background 0.3s;
+}
+.qq-qr-container:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 10px 25px var(--shadow-color);
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--pipi-cyan);
+}
+.qq-qr-box {
+    background: #ffffff;
+    padding: 8px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+}
+.qq-qr-text {
+    font-size: 0.85em;
+    font-weight: 800;
+    color: var(--text-muted);
+    letter-spacing: 1.5px;
+}
+[data-theme="light"] .qq-qr-container {
+    background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .qq-qr-container:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
     </style>
 </head>
 <body>
@@ -2303,24 +2473,25 @@ string GetWebUIHtml()
         <span>手机扫码打开这个界面</span>
     </div>
     <div class="container">
-        <div class="header">
+       <div class="header">
             <button type="button" class="header-btn collapse-toggle" id="configToggle" onclick="toggleConfig()"
                 aria-expanded="false" title="展开/收起设置">⚙</button>
-                <button type="button" class="header-btn" onclick="clearContext()" title="手动清理上下文记忆">🧹</button>
+            <button type="button" class="header-btn" onclick="clearContext()" title="手动清理上下文记忆">🧹</button>
             <h1>
-                <img class="logo-mark" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="PiPiClaw Logo" />
                 <span>PiPiClaw</span>
             </h1>
-            <button class="header-btn theme-toggle" onclick="toggleTheme()" aria-label="切换主题" title="切换深/浅色主题">
-                <span id="theme-icon">🌙</span>
-            </button>
+            <div style="display: flex; gap: 8px;">
+                <button class="header-btn" onclick="toggleAboutModal()" title="关于 PiPiClaw">💡</button>
+                <button class="header-btn theme-toggle" onclick="toggleTheme()" aria-label="切换主题" title="切换深/浅色主题">
+                    <span id="theme-icon">🌙</span>
+                </button>
+            </div>
         </div>
         <div class="box" id="terminalBox" style="animation-delay:.2s;">
             <h2><span style="color:var(--pipi-magenta);">⌨️</span> 交互终端 (Terminal)</h2>
             <div class="chat-box" id="chatBox">
                 <div class="msg ai">
                     <div class="msg-header">
-                        <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="PiPiClaw Logo" class="logo-badge" />
                         皮皮虾 // 系统
                     </div>
                     <div class="msg-content"><div class="intro-text" style="margin-bottom: 12px; line-height: 1.5;"><strong>神经链接已建立。等待指令……</strong><br><br>【简介与食用指南】<br>这是一个能够全自动执行终端命令、读写文件、规划任务的本地 AI 智能体，能力不限于运维。<br>只要像吩咐人类一样说话，它就会自己写脚本、查日志、执行系统命令或调用 Skill-Hub 上的一万+ 生态技能来帮你办事。<br><br><span style="color:var(--text-muted); font-size: 0.9em;">试试直接点击或粘贴以下命令：</span></div><div class="cmd-suggestions" style="display: flex; flex-direction: column; gap: 8px;"><div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我扫描一下当前目录，看有没有 C# 相关的源码文件';">帮我扫描一下当前目录，看有没有 C# 相关的源码文件</div><div class="cmd-item" onclick="document.getElementById('chatInput').value='用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下';">用 C# 写一个能控制树莓派 GPIO 针脚电平的简单脚本，并帮我运行它测试一下</div><div class="cmd-item" onclick="document.getElementById('chatInput').value='帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt';">帮我查一下系统当前的内存占用情况，并把结果写进 memory_log.txt</div><div class="cmd-item" onclick="document.getElementById('chatInput').value='每天下午3点，帮我屏幕截图看一下我在干什么？';">每天下午3点，帮我屏幕截图看一下我在干什么？</div></div></div>
@@ -2412,6 +2583,18 @@ string GetWebUIHtml()
                         <button type="button" class="btn-add-model" onclick="addUrlConfigUI()">+ 添加一个新的下载节点</button>
                     </div>
                     <div style="border-top: 1px dashed var(--glass-stroke); "></div>
+                    
+                    <div style="margin-top: 20px; border-top: 1px dashed var(--glass-stroke); padding-top: 20px;">
+                        <h3 style="font-size: 0.9em; color: var(--text-main); margin: 0 0 10px 0;">🤝 友军通讯录配置 (Peer Nodes)</h3>
+                        <div style="color:var(--text-muted); font-size:0.75em; margin-bottom:15px;">
+                          ⚠️ 提示：在此处登记队友名称和 URL，以后让它“安排任务给XXX”时，它会自己查通讯录，无需你每次发地址。
+                        </div>
+                        <div id="peerNodesConfigContainer"></div>
+                        <button type="button" class="btn-add-model" onclick="addPeerNodeRow()">+ 添加一个新的友军节点</button>
+                    </div>
+
+                    <div style="border-top: 1px dashed var(--glass-stroke); "></div>
+                    
                     <div>
                         <h3 style="font-size: 0.9em; color: var(--text-main); margin: 0 0 10px 0;">🔧 运维配置</h3>
                         <div style="color:var(--text-muted); font-size:0.75em;">
@@ -2437,6 +2620,44 @@ string GetWebUIHtml()
             </div>
         </div>
     </div>
+    <div class="modal" id="aboutModal" aria-hidden="true" role="dialog" aria-labelledby="aboutTitle">
+    <div class="modal-dialog box" style="animation:none; max-width: 480px;">
+        <div class="modal-header">
+            <h2 id="aboutTitle"><span style="color:var(--pipi-cyan);">💡</span> 探索 PiPiClaw</h2>
+            <button type="button" class="header-btn modal-close" onclick="closeAboutModal()" aria-label="关闭面板">✖</button>
+        </div>
+        <div class="collapse-body about-content">
+            <h3 style="font-size: 1.8em; margin: 0 0 5px 0; color: var(--text-main); font-weight: 900; letter-spacing: 1px;">皮皮虾 PiPiClaw</h3>
+            <div style="color: var(--pipi-cyan); font-weight: 800; font-size: 0.95em;">跨平台全能本地 AI 自动化终端</div>
+
+            <div class="about-badges">
+                <span class="about-badge">🌱 极简绿色免安装</span>
+                <span class="about-badge usb">💾 随身U盘便携版</span>
+            </div>
+
+            <div class="about-desc">
+                <strong>无依赖 · 零污染 · 超小体积</strong><br/><br/>
+                拔插即用，将我装进U盘即可带走你的专属智能体。<br/>
+                随时随地接管系统、全自动执行脚本、秒级调用 <strong>Skill-Hub 10000+</strong> 生态技能库。
+            </div>
+
+            <div class="about-links">
+                <a href="https://github.com/anan1213095357/PiPiClaw" target="_blank" class="btn-about-link btn-github">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"></path></svg>
+                    探索 GitHub 开源主页
+                </a>
+                <a href="https://qm.qq.com/q/kqkAVjWuQg" target="_blank" class="btn-about-link btn-qq">
+                    <svg t="1774312802555" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1954" width="22" height="22"><path d="M511.09761 957.257c-80.159 0-153.737-25.019-201.11-62.386-24.057 6.702-54.831 17.489-74.252 30.864-16.617 11.439-14.546 23.106-11.55 27.816 13.15 20.689 225.583 13.211 286.912 6.767v-3.061z" fill="#FAAD08" p-id="1955"></path><path d="M496.65061 957.257c80.157 0 153.737-25.019 201.11-62.386 24.057 6.702 54.83 17.489 74.253 30.864 16.616 11.439 14.543 23.106 11.55 27.816-13.15 20.689-225.584 13.211-286.914 6.767v-3.061z" fill="#FAAD08" p-id="1956"></path><path d="M497.12861 474.524c131.934-0.876 237.669-25.783 273.497-35.34 8.541-2.28 13.11-6.364 13.11-6.364 0.03-1.172 0.542-20.952 0.542-31.155C784.27761 229.833 701.12561 57.173 496.64061 57.162 292.15661 57.173 209.00061 229.832 209.00061 401.665c0 10.203 0.516 29.983 0.547 31.155 0 0 3.717 3.821 10.529 5.67 33.078 8.98 140.803 35.139 276.08 36.034h0.972z" fill="#000000" p-id="1957"></path><path d="M860.28261 619.782c-8.12-26.086-19.204-56.506-30.427-85.72 0 0-6.456-0.795-9.718 0.148-100.71 29.205-222.773 47.818-315.792 46.695h-0.962C410.88561 582.017 289.65061 563.617 189.27961 534.698 185.44461 533.595 177.87261 534.063 177.87261 534.063 166.64961 563.276 155.56661 593.696 147.44761 619.782 108.72961 744.168 121.27261 795.644 130.82461 796.798c20.496 2.474 79.78-93.637 79.78-93.637 0 97.66 88.324 247.617 290.576 248.996a718.01 718.01 0 0 1 5.367 0C708.80161 950.778 797.12261 800.822 797.12261 703.162c0 0 59.284 96.111 79.783 93.637 9.55-1.154 22.093-52.63-16.623-177.017" fill="#000000" p-id="1958"></path><path d="M434.38261 316.917c-27.9 1.24-51.745-30.106-53.24-69.956-1.518-39.877 19.858-73.207 47.764-74.454 27.875-1.224 51.703 30.109 53.218 69.974 1.527 39.877-19.853 73.2-47.742 74.436m206.67-69.956c-1.494 39.85-25.34 71.194-53.24 69.956-27.888-1.238-49.269-34.559-47.742-74.435 1.513-39.868 25.341-71.201 53.216-69.974 27.909 1.247 49.285 34.576 47.767 74.453" fill="#FFFFFF" p-id="1959"></path><path d="M683.94261 368.627c-7.323-17.609-81.062-37.227-172.353-37.227h-0.98c-91.29 0-165.031 19.618-172.352 37.227a6.244 6.244 0 0 0-0.535 2.505c0 1.269 0.393 2.414 1.006 3.386 6.168 9.765 88.054 58.018 171.882 58.018h0.98c83.827 0 165.71-48.25 171.881-58.016a6.352 6.352 0 0 0 1.002-3.395c0-0.897-0.2-1.736-0.531-2.498" fill="#FAAD08" p-id="1960"></path><path d="M467.63161 256.377c1.26 15.886-7.377 30-19.266 31.542-11.907 1.544-22.569-10.083-23.836-25.978-1.243-15.895 7.381-30.008 19.25-31.538 11.927-1.549 22.607 10.088 23.852 25.974m73.097 7.935c2.533-4.118 19.827-25.77 55.62-17.886 9.401 2.07 13.75 5.116 14.668 6.316 1.355 1.77 1.726 4.29 0.352 7.684-2.722 6.725-8.338 6.542-11.454 5.226-2.01-0.85-26.94-15.889-49.905 6.553-1.579 1.545-4.405 2.074-7.085 0.242-2.678-1.834-3.786-5.553-2.196-8.135" fill="#000000" p-id="1961"></path><path d="M504.33261 584.495h-0.967c-63.568 0.752-140.646-7.504-215.286-21.92-6.391 36.262-10.25 81.838-6.936 136.196 8.37 137.384 91.62 223.736 220.118 224.996H506.48461c128.498-1.26 211.748-87.612 220.12-224.996 3.314-54.362-0.547-99.938-6.94-136.203-74.654 14.423-151.745 22.684-215.332 21.927" fill="#FFFFFF" p-id="1962"></path><path d="M323.27461 577.016v137.468s64.957 12.705 130.031 3.91V591.59c-41.225-2.262-85.688-7.304-130.031-14.574" fill="#EB1C26" p-id="1963"></path><path d="M788.09761 432.536s-121.98 40.387-283.743 41.539h-0.962c-161.497-1.147-283.328-41.401-283.744-41.539l-40.854 106.952c102.186 32.31 228.837 53.135 324.598 51.926l0.96-0.002c95.768 1.216 222.4-19.61 324.6-51.924l-40.855-106.952z" fill="#EB1C26" p-id="1964"></path></svg>
+                    加入官方交流群聊
+                </a>
+                <div class="qq-qr-container" title="微信/QQ扫码加群">
+                    <div id="qq-qrcode" class="qq-qr-box"></div>
+                    <div class="qq-qr-text">扫码加入官方交流群</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
     <script>
         let currentUsername = localStorage.getItem('username') || '';
 
@@ -2461,8 +2682,28 @@ string GetWebUIHtml()
             }
             return originalFetch(resource, config);
         };
-        const LOGO_DATA_URL = "{{LOGO_DATA_URL}}";
-        document.querySelectorAll('.logo-mark, .logo-badge').forEach(img => { img.src = LOGO_DATA_URL; });
+        // 删除了旧的 logo 注入逻辑，新增了关于面板控制逻辑
+        const aboutModal = document.getElementById('aboutModal');
+        function openAboutModal() {
+            if (!aboutModal) return;
+            aboutModal.classList.add('show');
+            aboutModal.setAttribute('aria-hidden', 'false');
+        }
+        function closeAboutModal() {
+            if (!aboutModal) return;
+            aboutModal.classList.remove('show');
+            aboutModal.setAttribute('aria-hidden', 'true');
+        }
+        function toggleAboutModal() {
+            if (aboutModal && aboutModal.classList.contains('show')) closeAboutModal();
+            else openAboutModal();
+        }
+        if (aboutModal) {
+            aboutModal.addEventListener('click', (e) => {
+                if (e.target === aboutModal) closeAboutModal();
+            });
+        }
+
         function toggleTheme() {
             const root = document.documentElement;
             const icon = document.getElementById('theme-icon');
@@ -2513,7 +2754,7 @@ string GetWebUIHtml()
             });
         }
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeConfig();
+            if (e.key === 'Escape') { closeConfig(); closeTasksModal(); closeAboutModal(); }
         });
         const host = window.location.hostname;
         const targetUrl = (host === 'localhost' || host === '127.0.0.1')
@@ -2528,6 +2769,17 @@ string GetWebUIHtml()
                 colorLight: "#ffffff",
                 correctLevel: QRCode.CorrectLevel.H
             });
+            const qqQrBox = document.getElementById("qq-qrcode");
+            if (qqQrBox) {
+                new QRCode(qqQrBox, {
+                    text: "https://qm.qq.com/q/kqkAVjWuQg",
+                    width: 130,   // 稍微大一点以保证扫码成功率
+                    height: 130,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            }
         } else {
             const qrContainer = document.getElementById("qrcode-container");
             if (qrContainer) qrContainer.style.display = 'none';
@@ -2615,6 +2867,45 @@ string GetWebUIHtml()
         function getUrlsFromUI() {
             return Array.from(document.querySelectorAll('.cfg-url')).map(input => input.value.trim());
         }
+        // --- 新增：友军节点逻辑 ---
+        function renderPeerNodesConfigUI(peerNodes) {
+            const container = document.getElementById('peerNodesConfigContainer');
+            container.innerHTML = '';
+            if (peerNodes && Object.keys(peerNodes).length > 0) {
+                for (const [key, value] of Object.entries(peerNodes)) {
+                    addPeerNodeRow(key, value);
+                }
+            }
+        }
+        function addPeerNodeRow(key = '', value = '') {
+            const container = document.getElementById('peerNodesConfigContainer');
+            container.insertAdjacentHTML('beforeend', `
+                <div class="config-model-item" style="padding: 10px 15px; margin-bottom: 10px;">
+                    <button type="button" class="btn-remove-model" onclick="this.parentElement.remove()" title="删除此节点">✖</button>
+                    <div class="config-row" style="margin: 0;">
+                        <div class="form-group">
+                            <label>队友名称 (如: 树莓派)</label>
+                            <input type="text" class="cfg-peer-name" value="${escapeHtml(key)}" placeholder="输入辨识名称" />
+                        </div>
+                        <div class="form-group">
+                            <label>队友地址 (URL)</label>
+                            <input type="text" class="cfg-peer-url" value="${escapeHtml(value)}" placeholder="http://192.168.x.x:5050" />
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+        function getPeerNodesFromUI() {
+            const peerNodes = {};
+            document.querySelectorAll('#peerNodesConfigContainer .config-model-item').forEach(el => {
+                const name = el.querySelector('.cfg-peer-name').value.trim();
+                const url = el.querySelector('.cfg-peer-url').value.trim();
+                if (name && url) {
+                    peerNodes[name] = url; // 组装为字典 { "树莓派": "http://..." }
+                }
+            });
+            return peerNodes;
+        }
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
@@ -2625,6 +2916,7 @@ string GetWebUIHtml()
                 document.getElementById('systemPrompt').value = data.SystemPrompt || '';
                 renderModelConfigUI(data.Models);
                 renderUrlConfigUI(data.SkillHubDownloadUrls);
+                renderPeerNodesConfigUI(data.PeerNodes);
             } catch { }
         }
         async function saveConfig() {
@@ -2641,14 +2933,16 @@ string GetWebUIHtml()
                 // 如果全部删空了，给个保底地址防止崩溃
                 urlsData = ["https://wry-manatee-359.convex.site/api/v1/download?slug={slug}"];
             }
+            const peerNodesData = getPeerNodesFromUI();
             const cfg = {
                 Models: modelsData,
                 SudoPassword: document.getElementById('sudoPassword').value,
                 WebPort: portVal,
                 SkillHubDownloadUrls: urlsData,
-                SystemPrompt: document.getElementById('systemPrompt').value
+                SystemPrompt: document.getElementById('systemPrompt').value,
+                PeerNodes: peerNodesData
             };
-            const btn = document.querySelector('.btn-submit');
+            const btn = document.querySelector('#configBody .btn-submit');
             const originalText = btn ? btn.innerHTML : '';
             try {
                 if (btn) btn.innerHTML = '正在上传...';
@@ -3115,7 +3409,9 @@ public class AppConfig
     [JsonPropertyName("WebPort")] public int WebPort { get; set; } = 5050;
     [JsonPropertyName("SkillHubSearchUrl")] public string SkillHubSearchUrl { get; set; } = "http://lb-3zbg86f6-0gwe3n7q8t4sv2za.clb.gz-tencentclb.com/api/v1/search";
     [JsonPropertyName("SystemPrompt")] public string SystemPrompt { get; set; } = "";
+    [JsonPropertyName("PeerNodes")] public Dictionary<string, string> PeerNodes { get; set; } = new();
     [JsonPropertyName("SkillHubDownloadUrls")]
+    
     public List<string> SkillHubDownloadUrls { get; set; } = ["https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/skills/{slug}.zip", "https://wry-manatee-359.convex.site/api/v1/download?slug={slug}"];
 }
 public class TaskItem
