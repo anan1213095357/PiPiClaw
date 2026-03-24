@@ -350,7 +350,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 lock (tasksPath) { try { currentTasksJson = File.ReadAllText(tasksPath, Encoding.UTF8); } catch { } }
             }
             var peersStr = (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.Count > 0)
-                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】: {p.Value}"))
+                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】(请求地址: {p.Value.Url})\n  能力说明: {p.Value.Description}"))
                 : "暂无已知友军节点";
 
             var customPrompt = !string.IsNullOrWhiteSpace(GlobalConfig.SystemPrompt)
@@ -370,7 +370,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                      3. [技能调用策略] 下方列表包含了本地已安装的技能和简短摘要。当用户的需求需要用到某个技能时，你必须先调用 read_file 工具，读取该技能目录下的 skill.md 文件以获取完整的对接文档，然后再根据文档指导进行下一步操作。绝对不要凭空猜测调用方式！
                                      
                                      【友军通讯录 (Peer Nodes)】：
-                                      当用户让你安排任务给其他节点（如树莓派、NAS等）时，请直接从下方列表中查找对应的目标 URL，并调用 delegate_task 工具：
+                                      当用户提的需求友军能力满足的时候，优先调用 delegate_task 工具，以下是友军的能力说明：
                                       {{peersStr}}
                                       
                                      【PiPiClaw 挂起的定时任务（包含 task_id，供你管理任务时参考）】：
@@ -2874,12 +2874,13 @@ string GetWebUIHtml()
             const container = document.getElementById('peerNodesConfigContainer');
             container.innerHTML = '';
             if (peerNodes && Object.keys(peerNodes).length > 0) {
-                for (const [key, value] of Object.entries(peerNodes)) {
-                    addPeerNodeRow(key, value);
+                for (const [key, info] of Object.entries(peerNodes)) {
+                    addPeerNodeRow(key, info.Url, info.Description);
                 }
             }
         }
-        function addPeerNodeRow(key = '', value = '') {
+
+        function addPeerNodeRow(key = '', url = '', desc = '') {
             const container = document.getElementById('peerNodesConfigContainer');
             container.insertAdjacentHTML('beforeend', `
                 <div class="config-model-item" style="padding: 10px 15px; margin-bottom: 10px;">
@@ -2891,19 +2892,26 @@ string GetWebUIHtml()
                         </div>
                         <div class="form-group">
                             <label>队友地址 (URL)</label>
-                            <input type="text" class="cfg-peer-url" value="${escapeHtml(value)}" placeholder="http://192.168.x.x:5050" />
+                            <input type="text" class="cfg-peer-url" value="${escapeHtml(url)}" placeholder="http://192.168.x.x:5050" />
+                        </div>
+                        <div class="form-group" style="grid-column: 1 / -1; margin-top: 10px;">
+                            <label>能力说明 (Description) - 必填，AI靠此判断何时调用</label>
+                            <input type="text" class="cfg-peer-desc" value="${escapeHtml(desc)}" placeholder="例如：负责控制客厅灯光、拥有摄像头视觉识别能力..." />
                         </div>
                     </div>
                 </div>
             `);
         }
+
+
         function getPeerNodesFromUI() {
             const peerNodes = {};
             document.querySelectorAll('#peerNodesConfigContainer .config-model-item').forEach(el => {
                 const name = el.querySelector('.cfg-peer-name').value.trim();
                 const url = el.querySelector('.cfg-peer-url').value.trim();
+                const desc = el.querySelector('.cfg-peer-desc').value.trim();
                 if (name && url) {
-                    peerNodes[name] = url; // 组装为字典 { "树莓派": "http://..." }
+                    peerNodes[name] = { Url: url, Description: desc };
                 }
             });
             return peerNodes;
@@ -3163,7 +3171,6 @@ async function processStream(response, contentBoxId) {
                                 currentTerminalBox.insertAdjacentHTML('beforeend', `<span class="log-result">${escapeHtml(data.content)}</span>`);
                             }
 
-                            // 2. DOM 节点截断阈值逻辑 (防止节点过多导致浏览器卡死)
                             const MAX_LINES = 200; // 你可以自己调整阈值，保留最近的 200 行
                             if (currentTerminalBox.childElementCount > MAX_LINES) {
                                 // 移除最顶部的老旧日志节点
@@ -3431,10 +3438,16 @@ public class AppConfig
     [JsonPropertyName("WebPort")] public int WebPort { get; set; } = 5050;
     [JsonPropertyName("SkillHubSearchUrl")] public string SkillHubSearchUrl { get; set; } = "http://lb-3zbg86f6-0gwe3n7q8t4sv2za.clb.gz-tencentclb.com/api/v1/search";
     [JsonPropertyName("SystemPrompt")] public string SystemPrompt { get; set; } = "";
-    [JsonPropertyName("PeerNodes")] public Dictionary<string, string> PeerNodes { get; set; } = new();
+    [JsonPropertyName("PeerNodes")] public Dictionary<string, PeerNodeInfo> PeerNodes { get; set; } = new();
+
     [JsonPropertyName("SkillHubDownloadUrls")]
 
     public List<string> SkillHubDownloadUrls { get; set; } = ["https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/skills/{slug}.zip", "https://wry-manatee-359.convex.site/api/v1/download?slug={slug}"];
+}
+public class PeerNodeInfo
+{
+    [JsonPropertyName("Url")] public string Url { get; set; } = "";
+    [JsonPropertyName("Description")] public string Description { get; set; } = "";
 }
 public class TaskItem
 {
@@ -3504,5 +3517,6 @@ public class PushMsg
 [JsonSerializable(typeof(ChatReq))]
 [JsonSerializable(typeof(PushMsg))]
 [JsonSerializable(typeof(ModelConfig))]
+[JsonSerializable(typeof(Dictionary<string, PeerNodeInfo>))]
 [JsonSourceGenerationOptions(WriteIndented = true)]
 internal partial class AppJsonContext : JsonSerializerContext { }
