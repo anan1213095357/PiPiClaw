@@ -806,6 +806,7 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
     var shellArg = isWin ? $"/c chcp 65001 >nul 2>&1 & {cmd}" : $"-c \"{cmd}\"";
     var shellExe = isWin ? "cmd.exe" : "/bin/bash";
     var consoleEncoding = new UTF8Encoding(false);
+
     if (isBackground)
     {
         _ = Task.Run(async () =>
@@ -845,9 +846,16 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
         if (!isWin && !string.IsNullOrEmpty(askPassPath)) p.StartInfo.EnvironmentVariables["SUDO_ASKPASS"] = askPassPath;
         var outputBuilder = new StringBuilder();
         var errorBuilder = new StringBuilder();
+
+        // 核心改动：看门狗计时状态
+        var lastOutputTime = DateTime.UtcNow;
+        var idleTimeoutMs = 60000; // 60秒无任何输出判定为卡死
+        var isKilledByWatchdog = false;
+
         p.OutputDataReceived += (sender, e) =>
         {
             if (e.Data == null) return;
+            lastOutputTime = DateTime.UtcNow; // 刷新存活时间
             Console.WriteLine(e.Data);
             outputBuilder.AppendLine(e.Data);
             pushUpdate?.Invoke("tool_result", e.Data);
@@ -855,6 +863,7 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
         p.ErrorDataReceived += (sender, e) =>
         {
             if (e.Data == null) return;
+            lastOutputTime = DateTime.UtcNow; // 刷新存活时间
             Console.ForegroundColor = ConsoleColor.DarkYellow;
             Console.WriteLine(e.Data);
             Console.ResetColor();
@@ -864,25 +873,61 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
         try
         {
             p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine();
+
+            // 启动独立看门狗轮询任务
+            using var watchdogCts = new CancellationTokenSource();
+            _ = Task.Run(async () =>
+            {
+                while (!p.HasExited && !watchdogCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(2000, watchdogCts.Token); // 每2秒巡检一次
+                    if ((DateTime.UtcNow - lastOutputTime).TotalMilliseconds > idleTimeoutMs)
+                    {
+                        if (p.HasExited) break;
+                        isKilledByWatchdog = true;
+                        try
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            var warnMsg = "\n[守护进程] ⚠️ 检测到命令超过 1 分钟无任何输出，判定为阻塞等待输入或死循环，已强制猎杀进程！";
+                            Console.WriteLine(warnMsg);
+                            Console.ResetColor();
+
+                            errorBuilder.AppendLine(warnMsg);
+                            pushUpdate?.Invoke("tool_result", warnMsg);
+                            p.Kill(true); // 终结整个进程树
+                        }
+                        catch { }
+                        break;
+                    }
+                }
+            }, ct);
+
             await using (ct.Register(() =>
             {
-                try { p.Kill(true); }
-                catch
-                {
-                    // ignored
-                }
+                try { p.Kill(true); } catch { }
             }))
                 await p.WaitForExitAsync(ct);
+
+            watchdogCts.Cancel(); // 进程正常结束，取消看门狗
+
             if (ct.IsCancellationRequested) return CancelledMsg;
         }
         catch (Exception ex) { return $"[执行异常] {ex.Message}"; }
         finally { if (!string.IsNullOrEmpty(askPassPath) && File.Exists(askPassPath)) try { File.Delete(askPassPath); } catch { } }
+
         var errLines = errorBuilder.ToString().Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
         var outLines = outputBuilder.ToString().Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
         var compressedErr = UniversalLogCompressor.CompressLogs(errLines);
         var compressedOut = UniversalLogCompressor.CompressLogs(outLines);
         var finalErr = string.Join("\n", compressedErr).Trim();
         var finalOut = string.Join("\n", compressedOut).Trim();
+
+        // 如果被看门狗干掉，强行在输出尾部再补一句明显的提示给大模型
+        if (isKilledByWatchdog)
+        {
+            finalErr += "\n\n[系统提示] 你的命令因为超过60秒没有输出被强制杀死了。如果你的命令需要长时间运行且不需要即时反馈，请设置 is_background=true；如果是因为需要交互确认（如 [Y/n]），请加上 -y 之类的免交互参数！";
+        }
+
         return !string.IsNullOrWhiteSpace(finalErr) ? $"[标准错误/进度信息]\n{finalErr}\n[标准输出]\n{finalOut}" : finalOut;
     }
 }
