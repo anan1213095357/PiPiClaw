@@ -65,12 +65,12 @@ var toolsDoc = JsonDocument.Parse("""
     { "type": "function", "function": { "name": "write_file", "description": "写文件或局部修改文件。局部修改必须提供 old_content。", "parameters": { "type": "object", "properties": { "file_path": { "type": "string" }, "content": { "type": "string" }, "old_content": { "type": "string" } }, "required": ["file_path", "content"] } } },
     { "type": "function", "function": { "name": "read_local_image", "description": "看图（读取本地图片为 base64）", "parameters": { "type": "object", "properties": { "file_path": { "type": "string" } }, "required": ["file_path"] } } },
     { "type": "function", "function": { "name": "search_content", "description": "全局搜索关键字。", "parameters": { "type": "object", "properties": { "keyword": { "type": "string" }, "directory": { "type": "string" }, "file_pattern": { "type": "string" } }, "required": ["keyword"] } } },
-    { "type": "function", "function": { "name": "finish_task", "description": "当用户的最终目标已彻底完成时调用此工具。这会预约清空当前的上下文记忆，确保下一次接收新任务时处于干净的状态。", "parameters": { "type": "object", "properties": {} } } },
+    { "type": "function", "function": { "name": "finish_task", "description": "当用户主动提及清理上下文或者清理聊天记录时触发。", "parameters": { "type": "object", "properties": {} } } },
     { "type": "function", "function": { "name": "add_scheduled_task", "description": "添加定时或延时任务。系统底层的C#引擎会绝对接管时间调度，绝不能在任务执行时由AI去动态补加下一次任务。", "parameters": { "type": "object", "properties": { "execute_at": { "type": "string", "description": "首次执行时间，严格遵循 ISO 8601 格式，例如 '2026-03-20T14:30:00+08:00'" }, "user_intent": { "type": "string", "description": "到达时间时，大模型需要执行的具体任务要求和背景" }, "interval_minutes": { "type": "integer", "description": "可选。如果是周期性任务，请设置此周期间隔（分钟数）。例如每天执行则设为 1440。如果不填或为 0，则仅执行一次。系统会在底层自动无限循环，无需AI干预。" } }, "required": ["execute_at", "user_intent"] } } },
     { "type": "function", "function": { "name": "remove_scheduled_task", "description": "删除指定的定时或延时任务。", "parameters": { "type": "object", "properties": { "task_id": { "type": "string", "description": "要删除的任务ID（从任务列表中获取）" } }, "required": ["task_id"] } } },
     { "type": "function", "function": { "name": "install_skill", "description": "安装 单个 Skill-hub 或者 从第三方的技能，并根据包含的 MD 文件自动了解对接方式。", "parameters": { "type": "object", "properties": { "slug": { "type": "string", "description": "技能列表中的slug字段只需传入这个字段即可" } }, "required": ["slug"] } } },
     { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } },
-    { "type": "function", "function": { "name": "delegate_task", "description": "向局域网或公网上的其他皮皮虾节点指派任务或请求协作。你可以从系统提示词的【友军通讯录】中查找对方的名字和 URL。调用此工具后，当前进程会阻塞等待对方执行完毕并拿到最终结果。", "parameters": { "type": "object", "properties": { "target_url": { "type": "string", "description": "目标节点的完整 HTTP 基础地址，包含端口号，例如 'http://192.168.1.100:5050'" }, "task_message": { "type": "string", "description": "你要交办的具体任务内容、上下文背景或询问的问题" } }, "required": ["target_url", "task_message"] } } }
+    { "type": "function", "function": { "name": "delegate_task", "description": "向通讯录中的其他皮皮虾节点指派任务。请从系统提示词的【友军通讯录】中查找对方的准确名字。严禁委派给当前节点自己！", "parameters": { "type": "object", "properties": { "user_name": { "type": "string", "description": "目标节点的名称，例如 '树莓派'" }, "task_message": { "type": "string", "description": "你要交办的具体任务内容" } }, "required": ["user_name", "task_message"] } } }
 ]
 """);
 //在没有找到合适的  搜索 api 之前先注释
@@ -349,8 +349,12 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             {
                 lock (tasksPath) { try { currentTasksJson = File.ReadAllText(tasksPath, Encoding.UTF8); } catch { } }
             }
+            var nodeIdentityStr = !string.IsNullOrEmpty(username)
+                ? $"你当前是【{username}】皮皮虾。如【友军通讯录】中看到你自己！请直接用本地工具执行，绝对不要委派给自己！\n"
+                : "";
+
             var peersStr = (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.Count > 0)
-                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】(请求地址: {p.Value.Url})\n  能力说明: {p.Value.Description}"))
+                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】皮皮虾\n  能力说明: {p.Value.Description}"))
                 : "暂无已知友军节点";
 
             var customPrompt = !string.IsNullOrWhiteSpace(GlobalConfig.SystemPrompt)
@@ -365,13 +369,14 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                      {{sudoInstruction}}
 
                                      【记忆管理架构】：
-                                     1. 为节省Token，你的短时记忆默认只保留最近几次的对话记录。
-                                     2. 当任务彻底完成时调用 finish_task 清理环境。
-                                     3. [技能调用策略] 下方列表包含了本地已安装的技能和简短摘要。当用户的需求需要用到某个技能时，你必须先调用 read_file 工具，读取该技能目录下的 skill.md 文件以获取完整的对接文档，然后再根据文档指导进行下一步操作。绝对不要凭空猜测调用方式！
+                                     [技能调用策略] 下方列表包含了本地已安装的技能和简短摘要。当用户的需求需要用到某个技能时，你必须先调用 read_file 工具，读取该技能目录下的 skill.md 文件以获取完整的对接文档，然后再根据文档指导进行下一步操作。绝对不要凭空猜测调用方式！
                                      
+                                     【身份认知】
+                                     {{nodeIdentityStr}}
+
                                      【友军通讯录 (Peer Nodes)】：
-                                      当用户提的需求友军能力满足的时候，优先调用 delegate_task 工具，以下是友军的能力说明：
-                                      {{peersStr}}
+                                     当用户提的需求友军能力满足的时候，优先调用 delegate_task 工具，以下是友军的能力说明：
+                                     {{peersStr}}
                                       
                                      【PiPiClaw 挂起的定时任务（包含 task_id，供你管理任务时参考）】：
                                      {{currentTasksJson}}
@@ -481,7 +486,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         case "read_file": actionDesc = $"正在读取文件: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         case "write_file": actionDesc = $"正在写入文件: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         case "search_content": actionDesc = $"全局搜索关键字: {GetStrProp(tempArgs, "keyword")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "delegate_task": actionDesc = $"正在跨节点呼叫友军: {GetStrProp(tempArgs, "target_url")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                        case "delegate_task": actionDesc = $"正在跟同事对接: {GetStrProp(tempArgs, "user_name")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         default: actionDesc = $"调用参数: {argsString}"; break;
                     }
                     Console.ResetColor();
@@ -516,7 +521,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
                         case "self_update": result = await SelfUpdate(); break;
                         case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
-                        case "delegate_task": result = await DelegateTaskAsync(GetStrProp(tempArgs, "target_url"), GetStrProp(tempArgs, "task_message")); break;
+                        case "delegate_task": result = await DelegateTaskAsync(GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message")); break;
                         default:
                             result = fnName switch
                             {
@@ -555,10 +560,21 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
         }
         if (requireReset)
         {
+            // 在清空前，抓取 AI 刚刚输出的最后一句有效内容（即最终工作报告）
+            var finalSummary = history.LastOrDefault(m => m.Role == "assistant" && !string.IsNullOrEmpty(m.Content));
+
             history.Clear();
             if (File.Exists(historyPath)) File.Delete(historyPath);
+
+            // 把这句报告重新塞入干净的记忆中并落盘，专门留给 Team 中控读取
+            if (finalSummary != null)
+            {
+                history.Add(finalSummary.DeepClone());
+                SaveData(history, historyPath);
+            }
+
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\n✅ [生命周期] 用户 {username} 的任务上下文已全自动清理！随时接收新任务。");
+            Console.WriteLine($"\n✅ [生命周期] 用户 {username} 的任务上下文已全自动清理！(并保留了最终报告留底)");
             Console.ResetColor();
         }
         if (selfUpdateRequested)
@@ -946,28 +962,33 @@ string SearchContent(string? dir, string? keyword, string? pattern)
     }
     catch (Exception ex) { return $"[异常] {ex.Message}"; }
 }
-async Task<string> DelegateTaskAsync(string targetUrl, string taskMessage)
+// 替换 DelegateTaskAsync 函数
+async Task<string> DelegateTaskAsync(string username, string taskMessage)
 {
-    if (string.IsNullOrEmpty(targetUrl) || string.IsNullOrEmpty(taskMessage))
-        return "[委派失败] 目标地址或任务内容为空。";
+    if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(taskMessage))
+        return "[委派失败] 节点名称或任务内容为空。";
+
+    if (!GlobalConfig.PeerNodes!.TryGetValue(username, out var peerInfo) || string.IsNullOrEmpty(peerInfo.Url))
+        return $"[委派失败] 未在通讯录中找到{username}皮皮虾，或其 URL 未配置。";
 
     try
     {
-        var reqUrl = targetUrl.TrimEnd('/') + "/api/agent_task";
+        var reqUrl = peerInfo.Url.TrimEnd('/') + "/api/agent_task";
         var reqBody = new ChatReq { Message = taskMessage, ModelIndex = 0 };
         var jsonBody = JsonSerializer.Serialize(reqBody, AppJsonContext.Default.ChatReq);
         using var request = new HttpRequestMessage(HttpMethod.Post, reqUrl);
-        request.Headers.Add("X-Username", $"PeerAgent_{Guid.NewGuid().ToString("N").Substring(0, 6)}");
+        // 【核心修复】：直接把目标节点自己的名字传过去，这样它的历史记录就能存到自己的名下
+        request.Headers.Add("X-Username", Uri.EscapeDataString(username));
         request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
         using var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadAsStringAsync();
-        return $"[友军 {targetUrl} 执行完毕并返回了以下结果]:\n{result}";
+        return $"[{username}皮皮虾执行完毕并返回结果]:\n{result}";
     }
     catch (Exception ex)
     {
-        return $"[委派通信异常] 无法连接到节点或对方执行出错: {ex.Message}";
+        return $"[委派通信异常] 无法连接到节点 '{username}' 或对方执行出错: {ex.Message}";
     }
 }
 async Task<string> InstallSkill(string? slug)
@@ -1167,7 +1188,7 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
     res.Headers.Add("Access-Control-Allow-Origin", "*");
     res.Headers.Add("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     res.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
-    var username = req.Headers["X-Username"];
+    var username = WebUtility.UrlDecode(req.Headers["X-Username"]);
     if (string.IsNullOrWhiteSpace(username)) username = "WebUser";
     try
     {
@@ -1240,6 +1261,56 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"cancelled\"}"));
                 break;
 
+
+            // --- 暴露当前智能体工作状态 ---
+            case "/api/status" when req.HttpMethod == "GET":
+                {
+                    bool isBusy = false;
+                    string actionStr = "摸鱼中...";
+                    string activeKey = username;
+
+                    if (userLocks.TryGetValue(username, out var lck) && lck.CurrentCount == 0)
+                    {
+                        isBusy = true;
+                    }
+                    if (isBusy)
+                    {
+                        actionStr = "🤔 正在分析决策中..."; // LLM 请求中默认展示思考状态
+                        if (userLiveStream.TryGetValue(activeKey, out var stream))
+                        {
+                            PushMsg? lastTool = null;
+                            lock (stream)
+                            {
+                                lastTool = stream.LastOrDefault(m => m.Type == "tool");
+                            }
+                            if (lastTool != null)
+                            {
+                                var lines = lastTool.Content.Split('\n');
+                                if (lines.Length > 1)
+                                {
+                                    var toolName = lines[0].Replace("[调用工具]", "").Trim();
+                                    var desc = lines[1].Trim();
+                                    if (desc.Length > 40)
+                                    {
+                                        desc = desc.Substring(0, 40) + "...";
+                                    }
+                                    // 使用换行符把命令名和参数拼接起来
+                                    actionStr = $"{toolName}\n{desc}";
+                                }
+                                else
+                                {
+                                    actionStr = lines[0].Replace("[调用工具]", "").Trim();
+                                }
+                            }
+                        }
+                    }
+                    string statusJson = $"{{\"isWorking\":{isBusy.ToString().ToLower()}, \"currentAction\":{JsonSerializer.Serialize(actionStr)}}}";
+                    res.ContentType = "application/json; charset=utf-8";
+                    await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(statusJson));
+                    break;
+                }
+
+
             case "/api/clear" when req.HttpMethod == "POST":
                 GetHistory(username).Clear();
                 try { File.Delete(Path.Combine(recordsDir, $"{username}_history.json")); } catch { }
@@ -1252,44 +1323,46 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 break;
 
             case "/api/attach" when req.HttpMethod == "POST":
-                bool isBusy = userLocks.TryGetValue(username, out var lck) && lck.CurrentCount == 0;
-                if (!isBusy)
                 {
-                    res.ContentType = "application/json";
-                    await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"idle\"}"));
+                    bool isBusy = userLocks.TryGetValue(username, out var lck) && lck.CurrentCount == 0;
+                    if (!isBusy)
+                    {
+                        res.ContentType = "application/json";
+                        await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"idle\"}"));
+                        break;
+                    }
+
+                    res.ContentType = "text/plain; charset=utf-8";
+                    res.SendChunked = true;
+                    using (var attachWriter = new StreamWriter(res.OutputStream, new UTF8Encoding(false)))
+                    {
+                        attachWriter.AutoFlush = true;
+                        userConnections[username] = (msg) =>
+                        {
+                            try { attachWriter.Write(JsonSerializer.Serialize(msg, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
+                        };
+
+                        // 先把期间积攒的缓存推给刚上线的前端
+                        if (userLiveStream.TryGetValue(username, out var lst))
+                        {
+                            List<PushMsg> copy;
+                            lock (lst) copy = lst.ToList();
+                            foreach (var m in copy)
+                            {
+                                try { attachWriter.Write(JsonSerializer.Serialize(m, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
+                            }
+                        }
+
+                        // 保持连接不断开，直到任务彻底执行完毕释放锁
+                        while (userLocks.TryGetValue(username, out var lck2) && lck2.CurrentCount == 0)
+                        {
+                            await Task.Delay(1000);
+                            try { attachWriter.Write(" "); } catch { break; } // 用空格保活
+                        }
+                        userConnections.TryRemove(username, out _);
+                    }
                     break;
                 }
-
-                res.ContentType = "text/plain; charset=utf-8";
-                res.SendChunked = true;
-                using (var attachWriter = new StreamWriter(res.OutputStream, new UTF8Encoding(false)))
-                {
-                    attachWriter.AutoFlush = true;
-                    userConnections[username] = (msg) =>
-                    {
-                        try { attachWriter.Write(JsonSerializer.Serialize(msg, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
-                    };
-
-                    // 先把期间积攒的缓存推给刚上线的前端
-                    if (userLiveStream.TryGetValue(username, out var lst))
-                    {
-                        List<PushMsg> copy;
-                        lock (lst) copy = lst.ToList();
-                        foreach (var m in copy)
-                        {
-                            try { attachWriter.Write(JsonSerializer.Serialize(m, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
-                        }
-                    }
-
-                    // 保持连接不断开，直到任务彻底执行完毕释放锁
-                    while (userLocks.TryGetValue(username, out var lck2) && lck2.CurrentCount == 0)
-                    {
-                        await Task.Delay(1000);
-                        try { attachWriter.Write(" "); } catch { break; } // 用空格保活
-                    }
-                    userConnections.TryRemove(username, out _);
-                }
-                break;
 
             case "/api/chat":
                 using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
@@ -2465,8 +2538,8 @@ string GetWebUIHtml()
 <body>
     <div id="userLoginOverlay">
         <div class="login-box">
-            <h2 style="color:var(--pipi-cyan);">请输入用户名</h2>
-            <input type="text" id="usernameInput" placeholder="例如：楠哥" style="margin-bottom:15px;"/>
+            <h2 style="color:var(--pipi-cyan);">请输入认领的皮皮虾名</h2>
+            <input type="text" id="usernameInput" placeholder="例如：雷霆皮皮虾" style="margin-bottom:15px;"/>
             <button class="btn-submit" onclick="confirmUsername()">进入系统</button>
         </div>
     </div>
