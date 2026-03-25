@@ -57,6 +57,20 @@ string GetConfig(string key, string def = "")
         _ => def
     };
 }
+// 新增热重载函数
+void ReloadConfig()
+{
+    try
+    {
+        if (File.Exists("appsettings.json"))
+        {
+            var json = File.ReadAllText("appsettings.json", Encoding.UTF8);
+            var cfg = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig);
+            if (cfg != null) GlobalConfig = cfg;
+        }
+    }
+    catch { /* 忽略解析错误，避免配置文件损坏时程序崩溃 */ }
+}
 // ========================== 2. 初始化 Tools (大模型工具箱) ==========================
 var toolsDoc = JsonDocument.Parse("""
 [
@@ -309,6 +323,7 @@ return;
 // ========================== 10. 核心 Agent 处理逻辑 ==========================
 async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, int modelIndex = 0, string username = "local", string caller = "")
 {
+
     var userLock = userLocks.GetOrAdd(username, _ => new SemaphoreSlim(100, 100));
     await userLock.WaitAsync();
     var liveStream = new List<PushMsg>();
@@ -350,7 +365,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
         while (!isDone)
         {
             using var cts = new CancellationTokenSource();
-            var animTask = Think(username,cts.Token);
+            var animTask = Think(username, cts.Token);
             var currentTasksJson = "暂无定时任务";
             if (File.Exists(tasksPath))
             {
@@ -365,7 +380,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 : "";
 
             var peersStr = (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.Count > 0)
-                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】皮皮虾\n  能力说明: {p.Value.Description}"))
+                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】皮皮虾\n  能力说明: 【{p.Value.Role}】{p.Value.Description}"))
                 : "暂无已知友军节点";
 
             var customPrompt = !string.IsNullOrWhiteSpace(GlobalConfig.SystemPrompt)
@@ -427,7 +442,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             string responseString = "";
             bool isSuccess = false;
             Exception? lastEx = null;
-            int maxRetries = 30;
+            int maxRetries = 30; // 设置最大重试次数
 
             for (int retry = 0; retry < maxRetries; retry++)
             {
@@ -994,6 +1009,9 @@ string WriteFile(string? path, string? content, string? oldContent = null)
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         Encoding targetEncoding = new UTF8Encoding(false);
         var currentText = File.Exists(path) ? ReadTextSmart(path, out targetEncoding) : "";
+
+        bool isConfig = Path.GetFileName(path).Equals("appsettings.json", StringComparison.OrdinalIgnoreCase);
+
         if (File.Exists(path) && !string.IsNullOrEmpty(oldContent))
         {
             var normalizedCurrent = currentText.Replace("\r\n", "\n");
@@ -1003,10 +1021,18 @@ string WriteFile(string? path, string? content, string? oldContent = null)
                 return "[修改失败] 未精准匹配到 old_content，请确认内容。如果你不确定，请先 read_file 查看完整内容。";
             var finalContent = normalizedCurrent.Replace(normalizedOld, normalizedNew);
             File.WriteAllText(path, finalContent.Replace("\n", Environment.NewLine), targetEncoding);
+
+            // 局部修改成功后，触发热重载
+            if (isConfig) ReloadConfig();
+
             return $"[修改成功] 文件局部已更新：{path}";
         }
 
         File.WriteAllText(path, content ?? "", targetEncoding);
+
+        // 全量写入成功后，触发热重载
+        if (isConfig) ReloadConfig();
+
         return $"[写入成功] 文件已全量保存：{path}";
     }
     catch (Exception ex) { return $"[写入/修改失败] {ex.Message}"; }
@@ -1282,7 +1308,8 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
     res.Headers.Add("Access-Control-Allow-Origin", "*");
     res.Headers.Add("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     res.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
-    var username = WebUtility.UrlDecode(req.Headers["X-Username"]);
+    var rawUsername = req.Headers["X-Username"];
+    var username = string.IsNullOrWhiteSpace(rawUsername) ? "WebUser" : Uri.UnescapeDataString(rawUsername);
     if (string.IsNullOrWhiteSpace(username)) username = "WebUser";
     try
     {
@@ -3043,28 +3070,35 @@ string GetWebUIHtml()
             container.innerHTML = '';
             if (peerNodes && Object.keys(peerNodes).length > 0) {
                 for (const [key, info] of Object.entries(peerNodes)) {
-                    addPeerNodeRow(key, info.Url, info.Description);
+                    const url = info.Url || info.url || '';
+                    const role = info.Role || info.role || '';
+                    const desc = info.Description || info.description || '';
+                    addPeerNodeRow(key, url, role, desc);
                 }
             }
         }
 
-        function addPeerNodeRow(key = '', url = '', desc = '') {
+        function addPeerNodeRow(key = '', url = '', role = '', desc = '') {
             const container = document.getElementById('peerNodesConfigContainer');
             container.insertAdjacentHTML('beforeend', `
                 <div class="config-model-item" style="padding: 10px 15px; margin-bottom: 10px;">
                     <button type="button" class="btn-remove-model" onclick="this.parentElement.remove()" title="删除此节点">✖</button>
                     <div class="config-row" style="margin: 0;">
                         <div class="form-group">
-                            <label>队友名称 (如: 树莓派)</label>
+                            <label>队友名称 (如: 张三)</label>
                             <input type="text" class="cfg-peer-name" value="${escapeHtml(key)}" placeholder="输入辨识名称" />
                         </div>
                         <div class="form-group">
                             <label>队友地址 (URL)</label>
-                            <input type="text" class="cfg-peer-url" value="${escapeHtml(url)}" placeholder="http://192.168.x.x:5050" />
+                            <input type="text" class="cfg-peer-url" value="${escapeHtml(url)}" placeholder="http://192.x.x.x:5050" />
                         </div>
-                        <div class="form-group" style="grid-column: 1 / -1; margin-top: 10px;">
-                            <label>能力说明 (Description) - 必填，AI靠此判断何时调用</label>
-                            <input type="text" class="cfg-peer-desc" value="${escapeHtml(desc)}" placeholder="例如：负责控制客厅灯光、拥有摄像头视觉识别能力..." />
+                        <div class="form-group" style="margin-top: 10px;">
+                            <label>岗位头衔 (Role)</label>
+                            <input type="text" class="cfg-peer-role" value="${escapeHtml(role)}" placeholder="如：总编辑、分析师..." />
+                        </div>
+                        <div class="form-group" style="margin-top: 10px;">
+                            <label>能力说明 (Description)</label>
+                            <input type="text" class="cfg-peer-desc" value="${escapeHtml(desc)}" placeholder="负责控制灯光或信息检索..." />
                         </div>
                     </div>
                 </div>
@@ -3077,13 +3111,15 @@ string GetWebUIHtml()
             document.querySelectorAll('#peerNodesConfigContainer .config-model-item').forEach(el => {
                 const name = el.querySelector('.cfg-peer-name').value.trim();
                 const url = el.querySelector('.cfg-peer-url').value.trim();
+                const role = el.querySelector('.cfg-peer-role').value.trim();
                 const desc = el.querySelector('.cfg-peer-desc').value.trim();
                 if (name && url) {
-                    peerNodes[name] = { Url: url, Description: desc };
+                    peerNodes[name] = { Url: url, Role: role, Description: desc };
                 }
             });
             return peerNodes;
         }
+
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
@@ -3614,7 +3650,9 @@ public class AppConfig
 }
 public class PeerNodeInfo
 {
+    [JsonPropertyName("Name")] public string Name { get; set; } = "";
     [JsonPropertyName("Url")] public string Url { get; set; } = "";
+    [JsonPropertyName("Role")] public string Role { get; set; } = "";
     [JsonPropertyName("Description")] public string Description { get; set; } = "";
 }
 public class TaskItem
@@ -3688,5 +3726,5 @@ public class PushMsg
 [JsonSerializable(typeof(PushMsg))]
 [JsonSerializable(typeof(ModelConfig))]
 [JsonSerializable(typeof(Dictionary<string, PeerNodeInfo>))]
-[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSourceGenerationOptions(WriteIndented = true, PropertyNameCaseInsensitive = true)]
 internal partial class AppJsonContext : JsonSerializerContext { }
