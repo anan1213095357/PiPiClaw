@@ -307,7 +307,7 @@ while (true)
 return;
 
 // ========================== 10. 核心 Agent 处理逻辑 ==========================
-async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, int modelIndex = 0, string username = "local",string caller = "")
+async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, int modelIndex = 0, string username = "local", string caller = "")
 {
     var userLock = userLocks.GetOrAdd(username, _ => new SemaphoreSlim(100, 100));
     await userLock.WaitAsync();
@@ -359,7 +359,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             var callerStr = !string.IsNullOrEmpty(caller)
                 ? $"\n【任务来源追溯】：当前任务由友军【{caller}】指派。当任务彻底做完准备交付时，请**直接用自然语言输出最终结果**，系统底层会全自动将你的话作为工作报告回传给【{caller}】！绝对不要用 delegate_task 跑去向【{caller}】做最终汇报。(注：若执行中途遇到困难，需要向【{caller}】请教确认需求，仍可使用 delegate_task 联系对方)。\n"
                 : "";
-            
+
             var nodeIdentityStr = !string.IsNullOrEmpty(username)
                 ? $"你当前是【{username}】皮皮虾。如【友军通讯录】中看到你自己！请直接用本地工具执行，绝对不要委派给自己！\n"
                 : "";
@@ -465,7 +465,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             cts.Cancel();
             await animTask;
             if (msg == null) break;
-            SafeAddHistory(userMsg);
+            SafeAddHistory(msg);
             var toolCalls = msg.ToolCalls;
             if (toolCalls != null && toolCalls.Count > 0)
             {
@@ -531,7 +531,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
                         case "self_update": result = await SelfUpdate(); break;
                         case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
-                        case "delegate_task": result = await DelegateTaskAsync(username,GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message")); break;
+                        case "delegate_task": result = await DelegateTaskAsync(username, GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message")); break;
                         default:
                             result = fnName switch
                             {
@@ -554,7 +554,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         Content = result,
                         ToolCallId = call.Id
                     };
-                    SafeAddHistory(userMsg);
+                    SafeAddHistory(toolResultMsg);
                 }
             }
             else
@@ -959,7 +959,8 @@ string WriteFile(string? path, string? content, string? oldContent = null)
             var normalizedCurrent = currentText.Replace("\r\n", "\n");
             var normalizedOld = oldContent.Replace("\r\n", "\n");
             var normalizedNew = content?.Replace("\r\n", "\n") ?? "";
-            if (!normalizedCurrent.Contains(normalizedOld)) return "[修改失败] 未精准匹配到 old_content，请确认内容。如果你不确定，请先 read_file 查看完整内容。";
+            if (!normalizedCurrent.Contains(normalizedOld)) 
+                return "[修改失败] 未精准匹配到 old_content，请确认内容。如果你不确定，请先 read_file 查看完整内容。";
             var finalContent = normalizedCurrent.Replace(normalizedOld, normalizedNew);
             File.WriteAllText(path, finalContent.Replace("\n", Environment.NewLine), targetEncoding);
             return $"[修改成功] 文件局部已更新：{path}";
@@ -1016,7 +1017,7 @@ string SearchContent(string? dir, string? keyword, string? pattern)
     catch (Exception ex) { return $"[异常] {ex.Message}"; }
 }
 
-async Task<string> DelegateTaskAsync(string callUser,string username, string taskMessage)
+async Task<string> DelegateTaskAsync(string callUser, string username, string taskMessage)
 {
     if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(taskMessage))
         return "[委派失败] 节点名称或任务内容为空。";
@@ -1387,33 +1388,31 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
 
                     res.ContentType = "text/plain; charset=utf-8";
                     res.SendChunked = true;
-                    using (var attachWriter = new StreamWriter(res.OutputStream, new UTF8Encoding(false)))
+                    using var attachWriter = new StreamWriter(res.OutputStream, new UTF8Encoding(false));
+                    attachWriter.AutoFlush = true;
+                    userConnections[username] = (msg) =>
                     {
-                        attachWriter.AutoFlush = true;
-                        userConnections[username] = (msg) =>
-                        {
-                            try { attachWriter.Write(JsonSerializer.Serialize(msg, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
-                        };
+                        try { attachWriter.Write(JsonSerializer.Serialize(msg, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
+                    };
 
-                        // 先把期间积攒的缓存推给刚上线的前端
-                        if (userLiveStream.TryGetValue(username, out var lst))
+                    // 先把期间积攒的缓存推给刚上线的前端
+                    if (userLiveStream.TryGetValue(username, out var lst))
+                    {
+                        List<PushMsg> copy;
+                        lock (lst) copy = lst.ToList();
+                        foreach (var m in copy)
                         {
-                            List<PushMsg> copy;
-                            lock (lst) copy = lst.ToList();
-                            foreach (var m in copy)
-                            {
-                                try { attachWriter.Write(JsonSerializer.Serialize(m, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
-                            }
+                            try { attachWriter.Write(JsonSerializer.Serialize(m, AppJsonContext.Default.PushMsg) + "|||END|||"); } catch { }
                         }
-
-                        // 保持连接不断开，直到任务彻底执行完毕释放锁
-                        while (userLocks.TryGetValue(username, out var lck2) && lck2.CurrentCount == 0)
-                        {
-                            await Task.Delay(1000);
-                            try { attachWriter.Write(" "); } catch { break; } // 用空格保活
-                        }
-                        userConnections.TryRemove(username, out _);
                     }
+
+                    // 保持连接不断开，直到任务彻底执行完毕释放锁
+                    while (userLocks.TryGetValue(username, out var lck2) && lck2.CurrentCount == 0)
+                    {
+                        await Task.Delay(1000);
+                        try { attachWriter.Write(" "); } catch { break; } // 用空格保活
+                    }
+                    userConnections.TryRemove(username, out _);
                     break;
                 }
 
@@ -1456,17 +1455,17 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
             case "/api/agent_task" when req.HttpMethod == "POST":
                 using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
                 {
-                    
+
                     var body = await reader.ReadToEndAsync();
                     var chatReqObj = JsonSerializer.Deserialize(body, AppJsonContext.Default.ChatReq);
                     if (chatReqObj != null)
                     {
                         var caller = chatReqObj.Caller ?? "未知节点";
                         var injectMsg = $"[系统最高优先级提示：你的队友【{caller}】主动找你沟通/求助。注意：你目前可能正在挂起等待其他任务的结果，但请你立刻放下手头的事，优先解答【{caller}】的问题或处理它的请求，直接用自然语言回复，系统会自动将你的话通过通信链路返回给对方！]\n对方发来的消息：{chatReqObj.Message}";
-                        var responseText = await RunAgent(injectMsg, false, chatReqObj.ModelIndex, username,chatReqObj.Caller);
+                        var responseText = await RunAgent(injectMsg, false, chatReqObj.ModelIndex, username, chatReqObj.Caller);
                         res.ContentType = "text/plain; charset=utf-8";
                         var respBytes = Encoding.UTF8.GetBytes(responseText);
-                        await res.OutputStream.WriteAsync(respBytes, 0, respBytes.Length);
+                        await res.OutputStream.WriteAsync(respBytes);
                     }
                 }
                 break;
@@ -1614,17 +1613,17 @@ string GetWebUIHtml()
             --sb-thumb: rgba(74, 144, 226, .4);
             --sb-thumb-hover: rgba(74, 144, 226, .65);
         }
-::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-    background: transparent;
-}
+        ::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
+            background: transparent;
+        }
 
-* {
-    scrollbar-width: none; 
-    -ms-overflow-style: none; 
-}
+        * {
+            scrollbar-width: none; 
+            -ms-overflow-style: none; 
+        }
         html {
             background-color: var(--bg-depth);
             transition: background-color 0.4s ease;
