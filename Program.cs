@@ -306,7 +306,7 @@ while (true)
 {
     ShowPendingTasks();
     Console.ForegroundColor = ConsoleColor.Magenta;
-    var input = "";
+    string? input = null;
     if (!Console.IsInputRedirected && !Console.IsOutputRedirected)
     {
         Console.Write("\n皮皮虾 > ");
