@@ -926,142 +926,142 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
     else
     {
         // ================= 前台阻塞模式 (终极防卡死版) =================
-    using var p = new Process();
-    p.StartInfo = new ProcessStartInfo(shellExe, shellArg)
-    {
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true,
-        StandardOutputEncoding = consoleEncoding,
-        StandardErrorEncoding = consoleEncoding
-    };
-    if (!isWin && !string.IsNullOrEmpty(askPassPath)) p.StartInfo.EnvironmentVariables["SUDO_ASKPASS"] = askPassPath;
-    var outputBuilder = new StringBuilder();
-    var errorBuilder = new StringBuilder();
-
-    var lastOutputTime = DateTime.UtcNow;
-    var startTime = DateTime.UtcNow; // 新增：记录绝对起点时间
-    var idleTimeoutMs = 60000;       // 60秒无任何输出判定卡死
-    var absoluteTimeoutMs = 300000;  // 新增：绝对超时时间，最长允许跑 5 分钟 (300秒)
-    var isKilledByWatchdog = false;
-    
-    // 新增：最大输出行数防御，防止内存 OOM
-    int currentLines = 0;
-    const int MaxLinesLimit = 5000; 
-
-    p.OutputDataReceived += (sender, e) =>
-    {
-        if (e.Data == null) return;
-        lastOutputTime = DateTime.UtcNow; 
-        
-        // 【熔断器】：超过最大行数，丢弃后续输出保护内存
-        if (Interlocked.Increment(ref currentLines) > MaxLinesLimit)
+        using var p = new Process();
+        p.StartInfo = new ProcessStartInfo(shellExe, shellArg)
         {
-            if (currentLines == MaxLinesLimit + 1)
-            {
-                var warn = "\n[系统拦截] ⚠️ 输出日志超过 5000 行限制，已自动掐断后续输出截获以保护内存...";
-                Console.WriteLine(warn);
-                outputBuilder.AppendLine(warn);
-                pushUpdate?.Invoke("tool_result", warn);
-            }
-            return; 
-        }
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = consoleEncoding,
+            StandardErrorEncoding = consoleEncoding
+        };
+        if (!isWin && !string.IsNullOrEmpty(askPassPath)) p.StartInfo.EnvironmentVariables["SUDO_ASKPASS"] = askPassPath;
+        var outputBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
 
-        Console.WriteLine(e.Data);
-        outputBuilder.AppendLine(e.Data);
-        pushUpdate?.Invoke("tool_result", e.Data);
-    };
-    
-    p.ErrorDataReceived += (sender, e) =>
-    {
-        if (e.Data == null) return;
-        lastOutputTime = DateTime.UtcNow;
-        
-        if (Interlocked.Increment(ref currentLines) > MaxLinesLimit) return; // 同样受总行数限制
+        var lastOutputTime = DateTime.UtcNow;
+        var startTime = DateTime.UtcNow;     // 新增：记录绝对起点时间
+        var idleTimeoutMs = 60000 * 3;       // 60秒无任何输出判定卡死
+        var absoluteTimeoutMs = 300000 * 2;      // 新增：绝对超时时间，最长允许跑 5 分钟 (300秒)
+        var isKilledByWatchdog = false;
 
-        Console.ForegroundColor = ConsoleColor.DarkYellow;
-        Console.WriteLine(e.Data);
-        Console.ResetColor();
-        errorBuilder.AppendLine(e.Data);
-        pushUpdate?.Invoke("tool_result", e.Data);
-    };
+        // 新增：最大输出行数防御，防止内存 OOM
+        int currentLines = 0;
+        const int MaxLinesLimit = 5000;
 
-    try
-    {
-        p.EnableRaisingEvents = true; 
-        p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine();
-
-        // 用于安全解除 await 阻塞的信号源
-        var processExitTcs = new TaskCompletionSource();
-        p.Exited += (s, e) => processExitTcs.TrySetResult();
-        if (p.HasExited) processExitTcs.TrySetResult();
-
-        // 启动独立看门狗轮询任务
-        using var watchdogCts = new CancellationTokenSource();
-        _ = Task.Run(async () =>
+        p.OutputDataReceived += (sender, e) =>
         {
-            while (!p.HasExited && !watchdogCts.Token.IsCancellationRequested)
-            {
-                await Task.Delay(2000, watchdogCts.Token); 
-                var now = DateTime.UtcNow;
-                
-                bool isIdle = (now - lastOutputTime).TotalMilliseconds > idleTimeoutMs;
-                bool isOvertime = (now - startTime).TotalMilliseconds > absoluteTimeoutMs;
+            if (e.Data == null) return;
+            lastOutputTime = DateTime.UtcNow;
 
-                if (isIdle || isOvertime)
+            // 【熔断器】：超过最大行数，丢弃后续输出保护内存
+            if (Interlocked.Increment(ref currentLines) > MaxLinesLimit)
+            {
+                if (currentLines == MaxLinesLimit + 1)
                 {
-                    if (p.HasExited) break;
-                    isKilledByWatchdog = true;
-                    
-                    // 【核心防御】：无论 OS 杀不杀得掉进程，强行让主线程向下走，坚决不卡死！
-                    processExitTcs.TrySetResult(); 
-
-                    try
-                    {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        var warnMsg = isOvertime 
-                            ? $"\n[守护进程] ⚠️ 任务执行超过了绝对时间限制 ({absoluteTimeoutMs/1000}秒)，已强制猎杀进程！"
-                            : "\n[守护进程] ⚠️ 检测到命令超过 1 分钟无任何输出，判定为阻塞等待输入或死循环，已强制猎杀进程！";
-                        Console.WriteLine(warnMsg);
-                        Console.ResetColor();
-
-                        errorBuilder.AppendLine(warnMsg);
-                        pushUpdate?.Invoke("tool_result", warnMsg);
-                        p.Kill(true); 
-                    }
-                    catch { }
-                    break;
+                    var warn = "\n[系统拦截] ⚠️ 输出日志超过 5000 行限制，已自动掐断后续输出截获以保护内存...";
+                    Console.WriteLine(warn);
+                    outputBuilder.AppendLine(warn);
+                    pushUpdate?.Invoke("tool_result", warn);
                 }
+                return;
             }
-        }, ct);
 
-        // 主线程等待区：有了看门狗兜底，这里绝对不可能永久卡死
-        await using (ct.Register(() => { processExitTcs.TrySetCanceled(); try { p.Kill(true); } catch { } }))
+            Console.WriteLine(e.Data);
+            outputBuilder.AppendLine(e.Data);
+            pushUpdate?.Invoke("tool_result", e.Data);
+        };
+
+        p.ErrorDataReceived += (sender, e) =>
         {
-            await processExitTcs.Task; 
-            await Task.Delay(200); // 给流缓冲留一点点收尾时间
+            if (e.Data == null) return;
+            lastOutputTime = DateTime.UtcNow;
+
+            if (Interlocked.Increment(ref currentLines) > MaxLinesLimit) return; // 同样受总行数限制
+
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine(e.Data);
+            Console.ResetColor();
+            errorBuilder.AppendLine(e.Data);
+            pushUpdate?.Invoke("tool_result", e.Data);
+        };
+
+        try
+        {
+            p.EnableRaisingEvents = true;
+            p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine();
+
+            // 用于安全解除 await 阻塞的信号源
+            var processExitTcs = new TaskCompletionSource();
+            p.Exited += (s, e) => processExitTcs.TrySetResult();
+            if (p.HasExited) processExitTcs.TrySetResult();
+
+            // 启动独立看门狗轮询任务
+            using var watchdogCts = new CancellationTokenSource();
+            _ = Task.Run(async () =>
+            {
+                while (!p.HasExited && !watchdogCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(2000, watchdogCts.Token);
+                    var now = DateTime.UtcNow;
+
+                    bool isIdle = (now - lastOutputTime).TotalMilliseconds > idleTimeoutMs;
+                    bool isOvertime = (now - startTime).TotalMilliseconds > absoluteTimeoutMs;
+
+                    if (isIdle || isOvertime)
+                    {
+                        if (p.HasExited) break;
+                        isKilledByWatchdog = true;
+
+                        // 【核心防御】：无论 OS 杀不杀得掉进程，强行让主线程向下走，坚决不卡死！
+                        processExitTcs.TrySetResult();
+
+                        try
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            var warnMsg = isOvertime
+                                ? $"\n[守护进程] ⚠️ 任务执行超过了绝对时间限制 ({absoluteTimeoutMs / 1000}秒)，已强制猎杀进程！"
+                                : "\n[守护进程] ⚠️ 检测到命令超过 1 分钟无任何输出，判定为阻塞等待输入或死循环，已强制猎杀进程！";
+                            Console.WriteLine(warnMsg);
+                            Console.ResetColor();
+
+                            errorBuilder.AppendLine(warnMsg);
+                            pushUpdate?.Invoke("tool_result", warnMsg);
+                            p.Kill(true);
+                        }
+                        catch { }
+                        break;
+                    }
+                }
+            }, ct);
+
+            // 主线程等待区：有了看门狗兜底，这里绝对不可能永久卡死
+            await using (ct.Register(() => { processExitTcs.TrySetCanceled(); try { p.Kill(true); } catch { } }))
+            {
+                await processExitTcs.Task;
+                await Task.Delay(200); // 给流缓冲留一点点收尾时间
+            }
+
+            watchdogCts.Cancel();
+            if (ct.IsCancellationRequested) return CancelledMsg;
+        }
+        catch (Exception ex) { return $"[执行异常] {ex.Message}"; }
+        finally { if (!string.IsNullOrEmpty(askPassPath) && File.Exists(askPassPath)) try { File.Delete(askPassPath); } catch { } }
+
+        var errLines = errorBuilder.ToString().Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
+        var outLines = outputBuilder.ToString().Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
+        var compressedErr = UniversalLogCompressor.CompressLogs(errLines);
+        var compressedOut = UniversalLogCompressor.CompressLogs(outLines);
+        var finalErr = string.Join("\n", compressedErr).Trim();
+        var finalOut = string.Join("\n", compressedOut).Trim();
+
+        if (isKilledByWatchdog)
+        {
+            finalErr += "\n\n[系统提示] 你的命令因为超时或没有输出被强制杀死了。如果你的命令需要长时间运行且不需要即时反馈，请设置 is_background=true；如果是因为需要交互确认（如 [Y/n]），请加上 -y 之类的免交互参数！";
         }
 
-        watchdogCts.Cancel(); 
-        if (ct.IsCancellationRequested) return CancelledMsg;
-    }
-    catch (Exception ex) { return $"[执行异常] {ex.Message}"; }
-    finally { if (!string.IsNullOrEmpty(askPassPath) && File.Exists(askPassPath)) try { File.Delete(askPassPath); } catch { } }
-
-    var errLines = errorBuilder.ToString().Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
-    var outLines = outputBuilder.ToString().Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
-    var compressedErr = UniversalLogCompressor.CompressLogs(errLines);
-    var compressedOut = UniversalLogCompressor.CompressLogs(outLines);
-    var finalErr = string.Join("\n", compressedErr).Trim();
-    var finalOut = string.Join("\n", compressedOut).Trim();
-
-    if (isKilledByWatchdog)
-    {
-        finalErr += "\n\n[系统提示] 你的命令因为超时或没有输出被强制杀死了。如果你的命令需要长时间运行且不需要即时反馈，请设置 is_background=true；如果是因为需要交互确认（如 [Y/n]），请加上 -y 之类的免交互参数！";
-    }
-
-    return !string.IsNullOrWhiteSpace(finalErr) ? $"[标准错误/进度信息]\n{finalErr}\n[标准输出]\n{finalOut}" : finalOut;
+        return !string.IsNullOrWhiteSpace(finalErr) ? $"[标准错误/进度信息]\n{finalErr}\n[标准输出]\n{finalOut}" : finalOut;
     }
 }
 string ReadFile(string? path)
@@ -3406,7 +3406,7 @@ string GetWebUIHtml()
                         <div class="msg-header">皮皮虾 // 系统</div>
                         <div class="msg-content">
                             <div style="color:var(--pipi-magenta); font-weight:bold;">
-                            ✨ 历史上下文与文件记录已手动清空！随时可以开始新任务。
+✨ 历史上下文与文件记录已手动清空！随时可以开始新任务。
                             </div>
                         </div>
                     </div>`;
