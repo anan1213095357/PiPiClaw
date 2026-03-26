@@ -1437,7 +1437,7 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
 
                             // 第一行：思考过程
                             if (lastThink != null)
-                                actionLines.Add($"🤔: {TruncateStr(lastThink.Content, 20)}");
+                                actionLines.Add($"🤔: {TruncateStr(lastThink.Content, 200)}");
                             else
                                 actionLines.Add($"🤔 正在分析决策中...");
 
@@ -1447,12 +1447,12 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                                 var lines = lastTool.Content.Split('\n');
                                 if (lines.Length > 1)
                                 {
-                                    actionLines.Add($"🔧: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 20)}");
-                                    actionLines.Add($"⚡: {TruncateStr(lines[1].Trim(), 20)}");
+                                    actionLines.Add($"🔧: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 200)}");
+                                    actionLines.Add($"⚡: {TruncateStr(lines[1].Trim(), 200)}");
                                 }
                                 else
                                 {
-                                    actionLines.Add($"🔧: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 20)}");
+                                    actionLines.Add($"🔧: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 200)}");
                                 }
                             }
 
