@@ -408,7 +408,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                      {{currentTasksJson}}
 
                                      【本地已安装的扩展技能及绝对路径说明】：
-                                     {{GetInstalledSkillsContext()}}
+                                     {{GetInstalledSkillsContext(username)}}
                                      """;
             var payloadMessages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPromptText } };
             IEnumerable<ChatMessage> recentMessages;
@@ -569,8 +569,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     var result = "";
                     switch (fnName)
                     {
-                        //case "search_skill": result = await SearchSkill(GetStrProp(tempArgs, "query")); break;
-                        case "install_skill": result = await InstallSkill(GetStrProp(tempArgs, "slug")); break;
+                        case "install_skill": result = await InstallSkill(GetStrProp(tempArgs, "slug"), username); break;
                         case "finish_task":
                             requireReset = true;
                             result = "[系统提示] 上下文清理已预约，这将在你给出最后一句回复后执行。请现在用正常的自然语言向用户总结任务完成情况。";
@@ -765,10 +764,11 @@ async Task ScheduleLoop()
     }
 }
 // ========================== 12. 工具函数封装区域 ==========================
-string GetInstalledSkillsContext()
+string GetInstalledSkillsContext(string username)
 {
-    var skillsDir = Path.Combine(AppContext.BaseDirectory, "skills");
-    if (!Directory.Exists(skillsDir)) return "当前未安装任何技能";
+    var skillsDir = Path.Combine(AppContext.BaseDirectory, "skills", username);
+    if (!Directory.Exists(skillsDir)) return "当前未安装任何专属技能";
+
     var sb = new StringBuilder();
     foreach (var dir in Directory.GetDirectories(skillsDir))
     {
@@ -776,6 +776,7 @@ string GetInstalledSkillsContext()
         var summaryPath = Path.Combine(dir, "summary.txt");
         var absolutePath = Path.GetFullPath(dir).Replace("\\", "/");
         sb.AppendLine($"- [{slug}] 绝对路径目录: {absolutePath}");
+
         if (File.Exists(summaryPath))
         {
             try
@@ -791,7 +792,7 @@ string GetInstalledSkillsContext()
             sb.AppendLine($"  说明：该技能已安装。请先 read_file 查看 {absolutePath}/skill.md，然后使用 write_file 在此目录下生成一个名为 summary.txt 的文件，里面只写一句话功能概括即可。");
         }
     }
-    return sb.Length > 0 ? sb.ToString() : "当前未安装任何技能";
+    return sb.Length > 0 ? sb.ToString() : "当前未安装任何专属技能";
 }
 
 async Task Think(string username, CancellationToken ct)
@@ -1121,20 +1122,24 @@ async Task<string> DelegateTaskAsync(string callUser, string username, string ta
         return $"[委派通信异常] 无法连接到节点 '{username}' 或对方执行出错: {ex.Message}";
     }
 }
-async Task<string> InstallSkill(string? slug)
+async Task<string> InstallSkill(string? slug, string username)
 {
     if (string.IsNullOrEmpty(slug)) return "❌ slug不能为空";
     var sb = new StringBuilder();
-    sb.AppendLine($"🚀 启动安装程序: {slug}...");
+    sb.AppendLine($"🚀 启动安装程序: {slug} (专属分配至: {username})...");
     try
     {
         var downloadUrls = (GlobalConfig.SkillHubDownloadUrls != null && GlobalConfig.SkillHubDownloadUrls.Count > 0)
             ? GlobalConfig.SkillHubDownloadUrls.Select(url => url.Replace("{slug}", slug)).ToList()
             : [$"https://wry-manatee-359.convex.site/api/v1/download?slug={slug}"];
-        string skillsFolder = Path.Combine(AppContext.BaseDirectory, "skills");
+
+        // 修改点：将目标文件夹按 username 隔离
+        string skillsFolder = Path.Combine(AppContext.BaseDirectory, "skills", username);
         string targetFolder = Path.Combine(skillsFolder, slug);
         string zipPath = Path.Combine(skillsFolder, $"{slug}.zip");
+
         if (!Directory.Exists(skillsFolder)) Directory.CreateDirectory(skillsFolder);
+
         bool downloadSuccess = false;
         foreach (var url in downloadUrls)
         {
@@ -1142,9 +1147,11 @@ async Task<string> InstallSkill(string? slug)
             catch (Exception ex) { sb.AppendLine($"⚠️ 当前节点不可用 ({ex.Message})，准备切换下一个节点..."); }
         }
         if (!downloadSuccess) throw new Exception("所有下载节点均不可用，文件获取失败。");
+
         sb.AppendLine("📦 正在解压技能文件...");
         if (Directory.Exists(targetFolder)) Directory.Delete(targetFolder, true);
         Directory.CreateDirectory(targetFolder);
+
         bool isWin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
         using var p = new Process();
         if (isWin)
@@ -1155,6 +1162,7 @@ async Task<string> InstallSkill(string? slug)
         {
             p.StartInfo = new ProcessStartInfo("unzip", $"-o \"{zipPath}\" -d \"{targetFolder}\"") { CreateNoWindow = true };
         }
+
         try
         {
             p.Start();
@@ -1168,6 +1176,7 @@ async Task<string> InstallSkill(string? slug)
         {
             throw new Exception($"调用系统底层解压失败: {cmdEx.Message}。请检查系统环境。");
         }
+
         File.Delete(zipPath);
         sb.AppendLine("✅ 技能解压完成。");
         string mdPath = Path.Combine(targetFolder, "skill.md");
@@ -1428,7 +1437,7 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
 
                             // 第一行：思考过程
                             if (lastThink != null)
-                                actionLines.Add($"🤔 思考: {TruncateStr(lastThink.Content, 20)}");
+                                actionLines.Add($"🤔: {TruncateStr(lastThink.Content, 20)}");
                             else
                                 actionLines.Add($"🤔 正在分析决策中...");
 
@@ -1438,12 +1447,12 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                                 var lines = lastTool.Content.Split('\n');
                                 if (lines.Length > 1)
                                 {
-                                    actionLines.Add($"🔧 工具: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 20)}");
-                                    actionLines.Add($"⚡ 执行: {TruncateStr(lines[1].Trim(), 20)}");
+                                    actionLines.Add($"🔧: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 20)}");
+                                    actionLines.Add($"⚡: {TruncateStr(lines[1].Trim(), 20)}");
                                 }
                                 else
                                 {
-                                    actionLines.Add($"🔧 工具: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 20)}");
+                                    actionLines.Add($"🔧: {TruncateStr(lines[0].Replace("[调用工具]", "").Trim(), 20)}");
                                 }
                             }
 
