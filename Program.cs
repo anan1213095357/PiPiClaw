@@ -156,7 +156,7 @@ bool selfUpdateRequested = false;
 _ = Task.Run(ScheduleLoop);
 _ = Task.Run(StartWebManager);
 // ========================== 7. 定时任务管理逻辑 ==========================
-string AddScheduledTask(string? execAtStr, string? intent, int intervalMinutes = 0)
+string AddScheduledTask(string username, string? execAtStr, string? intent, int intervalMinutes = 0)
 {
     if (!DateTimeOffset.TryParse(execAtStr, out var execTime))
         return "[添加失败] 时间格式解析错误，请使用 ISO 8601 格式，如 2026-03-20T15:30:00+08:00";
@@ -176,18 +176,20 @@ string AddScheduledTask(string? execAtStr, string? intent, int intervalMinutes =
             ExecuteAt = execTime.ToString("o"),
             UserIntent = intent ?? "未提供具体意图",
             Status = "pending",
-            IntervalMinutes = intervalMinutes
+            IntervalMinutes = intervalMinutes,
+            Username = username // 👈 绑定到当前操作的用户
         };
         tasks.Add(newTask);
         File.WriteAllText(tasksPath, JsonSerializer.Serialize(tasks, AppJsonContext.Default.ListTaskItem), Encoding.UTF8);
     }
+    // 控制台输出顺手加上归属人
     Console.ForegroundColor = ConsoleColor.Green;
     string loopStr = intervalMinutes > 0 ? $" [周期: 每 {intervalMinutes} 分钟执行]" : " [单次执行]";
-    Console.WriteLine($"[调度中心] 成功创建任务: {execTime:yyyy-MM-dd HH:mm:ss} -> {intent}{loopStr}");
+    Console.WriteLine($"[调度中心] 成功创建任务: {execTime:yyyy-MM-dd HH:mm:ss} -> {intent}{loopStr} (归属: {username})");
     Console.ResetColor();
     return $"[定时任务已添加] PiPiClaw 已将任务持久化，将在 {execTime:yyyy-MM-dd HH:mm:ss} 触发执行。{loopStr} 用户的需求是：{intent}。系统会在底层调度，请不要再次重复调用添加任务。";
 }
-string RemoveScheduledTask(string? taskId)
+string RemoveScheduledTask(string username, string? taskId)
 {
     if (string.IsNullOrEmpty(taskId)) return "[删除失败] 必须提供 task_id";
     lock (tasksPath)
@@ -196,17 +198,18 @@ string RemoveScheduledTask(string? taskId)
         var tasks = new List<TaskItem>();
         try { tasks = JsonSerializer.Deserialize(File.ReadAllText(tasksPath, Encoding.UTF8), AppJsonContext.Default.ListTaskItem) ?? new(); } catch { }
 
-        var targetNode = tasks.FirstOrDefault(t => t.Id == taskId);
+        // 👈 核心：只能删自己名下的任务
+        var targetNode = tasks.FirstOrDefault(t => t.Id == taskId && t.Username == username);
         if (targetNode != null)
         {
             tasks.Remove(targetNode);
             File.WriteAllText(tasksPath, JsonSerializer.Serialize(tasks, AppJsonContext.Default.ListTaskItem), Encoding.UTF8);
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"\n[调度中心] 成功移除任务 (ID: {taskId})");
+            Console.WriteLine($"\n[调度中心] 成功移除任务 (ID: {taskId}, 归属: {username})");
             Console.ResetColor();
             return $"[任务已删除] 成功移除了 ID 为 {taskId} 的任务。";
         }
-        return $"[删除失败] 未在挂起队列中找到 ID 为 {taskId} 的任务。";
+        return $"[删除失败] 未在挂起队列中找到归属于你且 ID 为 {taskId} 的任务。";
     }
 }
 // ========================== 8. 挂起任务顶层展示区 ==========================
@@ -249,7 +252,7 @@ void ShowPendingTasks()
                 Console.ForegroundColor = ConsoleColor.DarkGray;
                 Console.WriteLine($"{execTime:MM-dd HH:mm:ss} ({timeDisplay}){loopDisplay}");
                 Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine($"  └─ 需求: {intent} (ID: {t.Id})");
+                Console.WriteLine($"  └─ [归属: {t.Username}] 需求: {intent} (ID: {t.Id})");
             }
             Console.ResetColor();
         }
@@ -369,7 +372,19 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             var currentTasksJson = "暂无定时任务";
             if (File.Exists(tasksPath))
             {
-                lock (tasksPath) { try { currentTasksJson = File.ReadAllText(tasksPath, Encoding.UTF8); } catch { } }
+                lock (tasksPath)
+                {
+                    try
+                    {
+                        var allTasks = JsonSerializer.Deserialize(File.ReadAllText(tasksPath, Encoding.UTF8), AppJsonContext.Default.ListTaskItem) ?? new();
+                        var userTasks = allTasks.Where(t => t.Username == username).ToList();
+                        if (userTasks.Count > 0)
+                        {
+                            currentTasksJson = JsonSerializer.Serialize(userTasks, AppJsonContext.Default.ListTaskItem);
+                        }
+                    }
+                    catch { }
+                }
             }
             var callerStr = !string.IsNullOrEmpty(caller)
                 ? $"\n【任务来源追溯】：当前任务由友军【{caller}】指派。当任务彻底做完准备交付时，请**直接用自然语言输出最终结果**，系统底层会全自动将你的话作为工作报告回传给【{caller}】！绝对不要用 delegate_task 跑去向【{caller}】做最终汇报。(注：若执行中途遇到困难，需要向【{caller}】请教确认需求，仍可使用 delegate_task 联系对方)。\n"
@@ -589,10 +604,13 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                 int intervalMin = 0;
                                 if (tempArgs.HasValue && tempArgs.Value.TryGetProperty("interval_minutes", out var intProp) && intProp.ValueKind == JsonValueKind.Number)
                                     intervalMin = intProp.GetInt32();
-                                result = AddScheduledTask(GetStrProp(tempArgs, "execute_at"), GetStrProp(tempArgs, "user_intent"), intervalMin);
+                                // 👈 传入 username
+                                result = AddScheduledTask(username, GetStrProp(tempArgs, "execute_at"), GetStrProp(tempArgs, "user_intent"), intervalMin);
                                 break;
                             }
-                        case "remove_scheduled_task": result = RemoveScheduledTask(GetStrProp(tempArgs, "task_id")); break;
+                        case "remove_scheduled_task":
+                            result = RemoveScheduledTask(username, GetStrProp(tempArgs, "task_id"));
+                            break;
                         case "self_update": result = await SelfUpdate(); break;
                         case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
                         case "delegate_task": result = await DelegateTaskAsync(username, GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message")); break;
@@ -705,14 +723,15 @@ async Task ScheduleLoop()
                     modified = true;
                     var intent = t.UserIntent;
                     var taskId = t.Id;
+                    var taskUser = string.IsNullOrEmpty(t.Username) ? "local" : t.Username;
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             Console.ForegroundColor = ConsoleColor.Magenta;
-                            Console.WriteLine($"\n\n[🔔 皮皮虾唤醒] 正在接管系统执行预定需求: {intent}");
+                            Console.WriteLine($"\n\n[🔔 皮皮虾唤醒] 正在接管系统执行预定需求: {intent} (归属: {taskUser})");
                             Console.ResetColor();
-                            await RunAgent($"[系统级注入] 这是一个系统自动触发的定时任务。你之前设定了在此时执行该任务，用户的原始需求是：【{intent}】。请立刻处理，绝不要尝试手动重新添加定时任务，完成后调用 finish_task 结束。", true);
+                            await RunAgent($"[系统级注入] 这是一个系统自动触发的定时任务。你之前设定了在此时执行该任务，用户的原始需求是：【{intent}】。请立刻处理，绝不要尝试手动重新添加定时任务，完成后调用 finish_task 结束。", true, 0, taskUser);
                         }
                         catch (Exception ex)
                         {
@@ -1387,7 +1406,16 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 string tasksJson = "[]";
                 lock (tasksPath)
                 {
-                    if (File.Exists(tasksPath)) tasksJson = File.ReadAllText(tasksPath, Encoding.UTF8);
+                    if (File.Exists(tasksPath))
+                    {
+                        try
+                        {
+                            var allTasks = JsonSerializer.Deserialize(File.ReadAllText(tasksPath, Encoding.UTF8), AppJsonContext.Default.ListTaskItem) ?? new();
+                            var userTasks = allTasks.Where(t => t.Username == username).ToList();
+                            tasksJson = JsonSerializer.Serialize(userTasks, AppJsonContext.Default.ListTaskItem);
+                        }
+                        catch { }
+                    }
                 }
                 res.ContentType = "application/json";
                 byte[] tBytes = Encoding.UTF8.GetBytes(tasksJson);
@@ -3719,6 +3747,7 @@ public class TaskItem
     [JsonPropertyName("user_intent")] public string UserIntent { get; set; } = "";
     [JsonPropertyName("status")] public string Status { get; set; } = "";
     [JsonPropertyName("interval_minutes")] public int IntervalMinutes { get; set; } = 0;
+    [JsonPropertyName("username")] public string Username { get; set; } = "local";
 }
 public class ChatMessage
 {
