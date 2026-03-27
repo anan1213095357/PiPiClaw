@@ -482,8 +482,9 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     }
                     else
                     {
-                        // 4xx 级别的错误（如鉴权失败、参数错误等）通常没有重试的必要，直接抛出
-                        res.EnsureSuccessStatusCode();
+                        var ret = res.EnsureSuccessStatusCode();
+                        PushUpdate?.Invoke("final", $"{ret.StatusCode}:{ret.Content}");
+                        
                     }
                 }
                 catch (OperationCanceledException)
@@ -503,14 +504,11 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         Console.WriteLine($"\n[网络抖动] {ex.Message}，正在进行第 {retry + 1} 次重试...");
                         Console.ResetColor();
                         PushUpdate?.Invoke("tool_result", $"[网络抖动] 请求网关失败，准备第 {retry + 1} 次重试...");
-
-                        // 延时 2 秒后进行下一次重试，给网关恢复的时间
                         await Task.Delay(2000, taskCts.Token);
                     }
                 }
             }
 
-            // 如果用尽了重试次数依然失败，则执行原来的失败报错逻辑
             if (!isSuccess)
             {
                 cts.Cancel(); await animTask;
