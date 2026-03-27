@@ -1417,38 +1417,127 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
             case "/api/agents" when req.HttpMethod == "GET":
                 var agentFiles = Directory.GetFiles(recordsDir, "*_history.json")
                                           .Select(f => Path.GetFileName(f).Replace("_history.json", ""))
-                                          .Distinct()
                                           .ToList();
+
+                // 【新增：通讯录强绑定】将通讯录里的人也直接加入员工列表，哪怕他们还没说过话
+                if (GlobalConfig.PeerNodes != null)
+                {
+                    agentFiles.AddRange(GlobalConfig.PeerNodes.Keys);
+                }
+
+                agentFiles = agentFiles.Distinct().ToList();
                 var agentsJsonStr = JsonSerializer.Serialize(agentFiles, AppJsonContext.Default.ListString);
                 res.ContentType = "application/json; charset=utf-8";
                 await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(agentsJsonStr));
                 break;
 
             // --- 获取配置 ---
+            // --- 获取配置 ---
             case "/api/config" when req.HttpMethod == "GET":
+                // 【强绑定联动 1】：将本地已经产生聊天记录的 Agent，自动拉入通讯录，确保能在设置页看到并管理他们
+                if (GlobalConfig.PeerNodes == null) GlobalConfig.PeerNodes = new Dictionary<string, PeerNodeInfo>();
+                var localAgents = Directory.GetFiles(recordsDir, "*_history.json")
+                                           .Select(f => Path.GetFileName(f).Replace("_history.json", ""))
+                                           .ToList();
+                bool configModified = false;
+                foreach (var la in localAgents)
+                {
+                    if (!GlobalConfig.PeerNodes.ContainsKey(la))
+                    {
+                        GlobalConfig.PeerNodes[la] = new PeerNodeInfo
+                        {
+                            Name = la,
+                            Url = $"http://127.0.0.1:{webPort}",
+                            Role = "本地衍生智能体",
+                            Description = "系统自动捕获的本地工作节点"
+                        };
+                        configModified = true;
+                    }
+                }
+                // 如果发现有新员工，顺手保存进 appsettings.json
+                if (configModified) File.WriteAllText("appsettings.json", JsonSerializer.Serialize(GlobalConfig, AppJsonContext.Default.AppConfig), Encoding.UTF8);
+
                 byte[] cfgBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(GlobalConfig, AppJsonContext.Default.AppConfig));
                 res.ContentType = "application/json";
                 await res.OutputStream.WriteAsync(cfgBytes, 0, cfgBytes.Length);
                 break;
 
-            // --- 保存配置 ---
             case "/api/config" when req.HttpMethod == "POST":
-                using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
                 {
+                    using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
                     var body = await reader.ReadToEndAsync();
                     var newCfg = JsonSerializer.Deserialize(body, AppJsonContext.Default.AppConfig);
                     bool portChanged = false;
+
+                    // 【关键修改 1】：把 deletedKeys 提到最外面，这样下面给前端发消息时才能读到它
+                    List<string> deletedKeys = [];
+
                     if (newCfg != null)
                     {
+                        // 【新增核心逻辑：对比新老配置，处理被删掉的员工】
+                        if (GlobalConfig.PeerNodes != null && newCfg.PeerNodes != null)
+                        {
+                            var oldKeys = GlobalConfig.PeerNodes.Keys;
+                            var newKeys = newCfg.PeerNodes.Keys;
+
+                            // 找出在老配置中存在，但新配置中没有的 Key
+                            deletedKeys = oldKeys.Except(newKeys).ToList();
+
+                            foreach (var delUser in deletedKeys)
+                            {
+                                // 1. 打断该员工可能正在进行中的 AI 生成任务和流输出
+                                if (userCts.TryGetValue(delUser, out var cts)) cts.Cancel();
+                                userLocks.TryRemove(delUser, out _);
+                                userLiveStream.TryRemove(delUser, out _);
+                                userConnections.TryRemove(delUser, out _);
+
+                                // 2. 彻底删除他的历史聊天记录文件
+                                var histPath = Path.Combine(recordsDir, $"{delUser}_history.json");
+                                if (File.Exists(histPath)) { try { File.Delete(histPath); } catch { } }
+
+                                // 3. 从系统的高速缓存中抹除记录
+                                userHistories.TryRemove(delUser, out _);
+
+                                // 4. 取消他挂起的所有的专属定时任务
+                                lock (tasksPath)
+                                {
+                                    if (File.Exists(tasksPath))
+                                    {
+                                        try
+                                        {
+                                            var tasks = JsonSerializer.Deserialize(File.ReadAllText(tasksPath, Encoding.UTF8), AppJsonContext.Default.ListTaskItem) ?? new();
+                                            int removed = tasks.RemoveAll(t => t.Username == delUser);
+                                            if (removed > 0) File.WriteAllText(tasksPath, JsonSerializer.Serialize(tasks, AppJsonContext.Default.ListTaskItem), Encoding.UTF8);
+                                        }
+                                        catch { }
+                                    }
+                                }
+
+                                // 5. 删除他名下的专属技能包文件夹
+                                var skillsDir = Path.Combine(AppContext.BaseDirectory, "skills", delUser);
+                                if (Directory.Exists(skillsDir)) { try { Directory.Delete(skillsDir, true); } catch { } }
+
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine($"\n[员工解雇] 已彻底清理被移除的友军【{delUser}】的所有绑定数据 (历史/任务/技能/缓存)。");
+                                Console.ResetColor();
+                            }
+                        }
+                        // ============================================
+
                         int currentPort = int.TryParse(GetConfig("WebPort", "5050"), out var cp) ? cp : 5050;
                         portChanged = newCfg.WebPort != currentPort;
                         File.WriteAllText("appsettings.json", JsonSerializer.Serialize(newCfg, AppJsonContext.Default.AppConfig), Encoding.UTF8);
                         sudoPassword = newCfg.SudoPassword ?? "";
                         GlobalConfig = newCfg;
                     }
+
+                    // 【关键修改 2】：在这里把 deletedKeys 拼进 JSON 返回给前端
                     res.ContentType = "application/json";
-                    var resp = Encoding.UTF8.GetBytes(portChanged ? "{\"status\":\"port_changed\"}" : "{\"status\":\"ok\"}");
-                    await res.OutputStream.WriteAsync(resp, 0, resp.Length);
+                    string deletedArrayStr = deletedKeys.Count > 0 ? "\"" + string.Join("\",\"", deletedKeys) + "\"" : "";
+                    string respJson = $"{{\"status\":\"{(portChanged ? "port_changed" : "ok")}\", \"deleted_agents\":[{deletedArrayStr}]}}";
+
+                    var resp = Encoding.UTF8.GetBytes(respJson);
+                    await res.OutputStream.WriteAsync(resp);
                 }
                 break;
 
@@ -1475,10 +1564,12 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
 
             // --- 中断当前 AI 任务 ---
             case "/api/cancel":
-                if (userCts.TryGetValue(username, out var cts)) cts.Cancel();
-                res.ContentType = "application/json";
-                await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"cancelled\"}"));
-                break;
+                {
+                    if (userCts.TryGetValue(username, out var cts)) cts.Cancel();
+                    res.ContentType = "application/json";
+                    await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"cancelled\"}"));
+                    break;
+                }
 
 
             // --- 暴露当前智能体工作状态 ---
@@ -3047,11 +3138,6 @@ string GetWebUIHtml()
             if (aboutModal && aboutModal.classList.contains('show')) closeAboutModal();
             else openAboutModal();
         }
-        if (aboutModal) {
-            aboutModal.addEventListener('click', (e) => {
-                if (e.target === aboutModal) closeAboutModal();
-            });
-        }
 
         function toggleTheme() {
             const root = document.documentElement;
@@ -3096,11 +3182,6 @@ string GetWebUIHtml()
             if (!configModal) return;
             if (configModal.classList.contains('show')) closeConfig();
             else openConfig();
-        }
-        if (configModal) {
-            configModal.addEventListener('click', (e) => {
-                if (e.target === configModal) closeConfig();
-            });
         }
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') { closeConfig(); closeTasksModal(); closeAboutModal(); }
@@ -3320,6 +3401,21 @@ string GetWebUIHtml()
                 if (!res.ok) throw new Error('Config upload failed');
                 renderModelConfigUI(modelsData);
                 const result = await res.json().catch(() => ({}));
+
+                // 【强绑定联动 3】：一旦保存配置，立刻刷新大厅的下拉员工列表
+                await loadAgents(); 
+
+                // 【强绑定联动 4】：如果被炒鱿鱼的人正好是当前你在屏幕上看的人，立刻把他踢出并返回大厅
+                if (result.deleted_agents && result.deleted_agents.includes(currentUsername)) {
+                    alert(`🚨 员工【${currentUsername}】已被你在设置中解雇！\n其所有的历史记录、定时任务、专属扩展技能均已被系统拔除清理。\n系统将返回大厅。`);
+                    currentUsername = '';
+                    localStorage.removeItem('username');
+                    document.getElementById('chatBox').innerHTML = '';
+                    document.getElementById('userLoginOverlay').style.display = 'flex';
+                    closeConfig();
+                    return; // 中断后续流程，不让他继续操作了
+                }
+
                 if (result.status === 'port_changed') {
                     if (btn) {
                         btn.style.background = 'var(--pipi-cyan)';
@@ -3354,11 +3450,6 @@ string GetWebUIHtml()
         function toggleTasksModal() {
             if (tasksModal && tasksModal.classList.contains('show')) closeTasksModal();
             else openTasksModal();
-        }
-        if (tasksModal) {
-            tasksModal.addEventListener('click', (e) => {
-                if (e.target === tasksModal) closeTasksModal();
-            });
         }
         // 更新了 Escape 键的监听，兼顾两个弹窗
         document.addEventListener('keydown', (e) => {
