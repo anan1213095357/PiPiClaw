@@ -1413,6 +1413,17 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                 break;
 
+            // --- 获取已知的所有 Agent 列表 ---
+            case "/api/agents" when req.HttpMethod == "GET":
+                var agentFiles = Directory.GetFiles(recordsDir, "*_history.json")
+                                          .Select(f => Path.GetFileName(f).Replace("_history.json", ""))
+                                          .Distinct()
+                                          .ToList();
+                var agentsJsonStr = JsonSerializer.Serialize(agentFiles, AppJsonContext.Default.ListString);
+                res.ContentType = "application/json; charset=utf-8";
+                await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(agentsJsonStr));
+                break;
+
             // --- 获取配置 ---
             case "/api/config" when req.HttpMethod == "GET":
                 byte[] cfgBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(GlobalConfig, AppJsonContext.Default.AppConfig));
@@ -2761,6 +2772,38 @@ string GetWebUIHtml()
 [data-theme="light"] .qq-qr-container:hover {
     background: rgba(0, 0, 0, 0.06);
 }
+
+/* ==================== Agent 切换器样式 ==================== */
+.agent-switcher {
+    background: var(--glass-surface);
+    border: 1px solid var(--glass-stroke);
+    color: var(--pipi-cyan);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.9em;
+    font-family: var(--font-mono);
+    font-weight: 800;
+    outline: none;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    margin: 0 10px;
+    box-shadow: 0 4px 15px var(--shadow-color);
+    transition: all 0.3s ease;
+    max-width: 180px;
+    text-overflow: ellipsis;
+}
+.agent-switcher:hover, .agent-switcher:focus {
+    border-color: var(--pipi-cyan);
+    box-shadow: 0 6px 20px rgba(90, 200, 250, 0.2);
+    background: rgba(255, 255, 255, 0.1);
+}
+.agent-switcher option {
+    background: var(--bg-depth);
+    color: var(--text-main);
+    font-weight: bold;
+}
+
+
     </style>
 </head>
 <body>
@@ -2783,6 +2826,9 @@ string GetWebUIHtml()
             <h1>
                 <span>PiPiClaw</span>
             </h1>
+            <select id="agentSwitcher" class="agent-switcher" onchange="switchAgent(this.value)" title="切换当前工作的 Agent 身份">
+                <option value="">载入中...</option>
+            </select>
             <div style="display: flex; gap: 8px;">
                 <button class="header-btn" onclick="toggleAboutModal()" title="关于 PiPiClaw">💡</button>
                 <button class="header-btn theme-toggle" onclick="toggleTheme()" aria-label="切换主题" title="切换深/浅色主题">
@@ -3598,6 +3644,7 @@ window.addEventListener('DOMContentLoaded', () => {
         loadConfig();
         // 加载完固化的历史记录后，紧接着探针检查是否需要吸附后台的进行中任务
         loadHistory().then(checkStatusAndAttach);
+        loadAgents();
     } else {
         document.getElementById('usernameInput').focus();
     }
@@ -3611,6 +3658,7 @@ function confirmUsername() {
     document.getElementById('userLoginOverlay').style.display = 'none';
     loadConfig();
     loadHistory().then(checkStatusAndAttach);
+    loadAgents();
 }
 
 
@@ -3683,6 +3731,68 @@ function confirmUsername() {
                 console.warn('[loadHistory] failed:', e);
             }
         }
+
+
+// 获取并渲染所有已知的 Agent 列表
+async function loadAgents() {
+    try {
+        const res = await fetch('/api/agents');
+        if (res.ok) {
+            const agents = await res.json();
+            const switcher = document.getElementById('agentSwitcher');
+            switcher.innerHTML = '';
+
+            // 确保当前的 username 即使是刚刚新建的也包含在内
+            if (currentUsername && !agents.includes(currentUsername)) {
+                agents.unshift(currentUsername);
+            }
+
+            agents.forEach(agent => {
+                if (!agent) return;
+                const opt = document.createElement('option');
+                opt.value = agent;
+                opt.text = `[ ${agent} ]`;
+                if (agent === currentUsername) opt.selected = true;
+                switcher.appendChild(opt);
+            });
+
+            // 添加一个唤醒新 Agent 的入口
+            const optNew = document.createElement('option');
+            optNew.value = "_NEW_AGENT_";
+            optNew.text = "➕ 唤醒新 Agent...";
+            switcher.appendChild(optNew);
+        }
+    } catch(e) {}
+}
+
+// 核心切换逻辑
+function switchAgent(newVal) {
+    if (!newVal) return;
+
+    // 如果选择的是添加新 Agent，则弹回登录覆盖层
+    if (newVal === "_NEW_AGENT_") {
+        document.getElementById('agentSwitcher').value = currentUsername; // 恢复下拉框显示
+        document.getElementById('usernameInput').value = '';
+        document.getElementById('userLoginOverlay').style.display = 'flex';
+        document.getElementById('usernameInput').focus();
+        return;
+    }
+
+    if (newVal === currentUsername) return;
+
+    // 1. 切换本地状态
+    currentUsername = newVal;
+    localStorage.setItem('username', newVal);
+
+    // 2. 清空聊天面板残影
+    document.getElementById('chatBox').innerHTML = ''; 
+
+    // 3. 重新建立新 Agent 的连接、配置和历史记录
+    loadConfig();
+    loadHistory().then(checkStatusAndAttach);
+    loadAgents(); // 刷新列表高亮状态
+}
+
         loadConfig();
     </script>
 </body>
