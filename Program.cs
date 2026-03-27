@@ -362,7 +362,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
     {
         var useFullContext = false;
         var requireReset = false;
-        var userMsg = new ChatMessage { Role = "user", Content = inputMessage };
+        var userMsg = new ChatMessage { Role = "user", Content = inputMessage, Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
         SafeAddHistory(userMsg);
         var isDone = false;
         while (!isDone)
@@ -529,6 +529,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 {
                     msg.ReasoningContent = null;
                 }
+                msg.Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             }
             cts.Cancel();
             await animTask;
@@ -3991,6 +3992,7 @@ public class PeerNodeInfo
     [JsonPropertyName("Url")] public string Url { get; set; } = "";
     [JsonPropertyName("Role")] public string Role { get; set; } = "";
     [JsonPropertyName("Description")] public string Description { get; set; } = "";
+    [JsonPropertyName("ModelIndex")] public int ModelIndex { get; set; } = 0;
 }
 public class TaskItem
 {
@@ -4009,6 +4011,7 @@ public class ChatMessage
     [JsonPropertyName("name")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Name { get; set; }
     [JsonPropertyName("tool_call_id")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? ToolCallId { get; set; }
     [JsonPropertyName("tool_calls")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<ToolCall>? ToolCalls { get; set; }
+    [JsonPropertyName("timestamp")][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Timestamp { get; set; }
     public ChatMessage DeepClone()
     {
         return JsonSerializer.Deserialize(JsonSerializer.Serialize(this, AppJsonContext.Default.ChatMessage), AppJsonContext.Default.ChatMessage) ?? new ChatMessage();
