@@ -101,7 +101,7 @@ Console.WriteLine(@"
 ");
 Console.ForegroundColor = ConsoleColor.Green;
 Console.WriteLine($"皮皮虾已就绪。当前模型：[ {GetConfig("Model", "qwen3.5-plus")} ]");
-Console.WriteLine("PiPiClaw | 跨平台全能智能体 · Skill-Hub 10000+ 技能即刻可用\n");
+Console.WriteLine("跨平台全能智能体 · http://www.clawhub.ai 30000+ 技能即刻可用\n");
 
 Console.ResetColor();
 Console.WriteLine("【简介与食用指南】");
@@ -1566,6 +1566,19 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
             case "/api/cancel":
                 {
                     if (userCts.TryGetValue(username, out var cts)) cts.Cancel();
+
+                    // 新增：从历史记录中剥离最后一次对话（即刚刚发出的提问和生成的半截回答）
+                    var hist = GetHistory(username);
+                    lock (hist)
+                    {
+                        var lastUserIdx = hist.FindLastIndex(m => m.Role == "user");
+                        if (lastUserIdx >= 0)
+                        {
+                            hist.RemoveRange(lastUserIdx, hist.Count - lastUserIdx);
+                            SaveData(hist, Path.Combine(recordsDir, $"{username}_history.json"));
+                        }
+                    }
+
                     res.ContentType = "application/json";
                     await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"cancelled\"}"));
                     break;
@@ -3078,7 +3091,7 @@ string GetWebUIHtml()
             <div class="about-desc">
                 <strong>无依赖 · 零污染 · 超小体积</strong><br/><br/>
                 拔插即用，将我装进U盘即可带走你的专属智能体。<br/>
-                随时随地接管系统、全自动执行脚本、秒级调用 <strong>Skill-Hub 10000+</strong> 生态技能库。
+                随时随地接管系统、全自动执行脚本、秒级调用 <strong>http://www.clawhub.ai 30000+</strong> 生态技能库。
             </div>
 
             <div class="about-links">
