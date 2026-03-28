@@ -71,7 +71,6 @@ void ReloadConfig()
     }
     catch { /* 忽略解析错误，避免配置文件损坏时程序崩溃 */ }
 }
-// ========================== 2. 初始化 Tools (大模型工具箱) ==========================
 var toolsDoc = JsonDocument.Parse("""
 [
     { "type": "function", "function": { "name": "execute_command", "description": "执行终端命令", "parameters": { "type": "object", "properties": { "command": { "type": "string" }, "is_background": { "type": "boolean", "description": "【注意，生死攸关的判断】请严格按以下规则选择：\n1. 必须设为 true (后台)：适用于【永远不会自动退出】或【启动常驻服务/UI】或【启动浏览器自动化】等等的命令。例如：启动 Web 服务器、数据库守护进程、打开浏览器及UI自动化(如 agent-browser/chrome)、死循环脚本。这类任务必须丢入后台，否则你会把自己永久卡死！\n2. 必须设为 false (前台)：适用于【执行完会自动结束】并且你需要查看最终输出结果的命令。例如：环境部署(npm install, pip install)、编译构建、下载文件、查日志、执行普通算法脚本。即使这些任务非常耗时，只要它们最终会结束，就必须设为 false 以便拿到完整的执行日志。" } }, "required": ["command", "is_background"] } } },
@@ -84,7 +83,9 @@ var toolsDoc = JsonDocument.Parse("""
     { "type": "function", "function": { "name": "remove_scheduled_task", "description": "删除指定的定时或延时任务。", "parameters": { "type": "object", "properties": { "task_id": { "type": "string", "description": "要删除的任务ID（从任务列表中获取）" } }, "required": ["task_id"] } } },
     { "type": "function", "function": { "name": "install_skill", "description": "安装 单个 Skill-hub 或者 从第三方的技能，并根据包含的 MD 文件自动了解对接方式。", "parameters": { "type": "object", "properties": { "slug": { "type": "string", "description": "技能列表中的slug字段只需传入这个字段即可" } }, "required": ["slug"] } } },
     { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } },
-    { "type": "function", "function": { "name": "delegate_task", "description": "向通讯录中的其他皮皮虾节点指派任务。请从系统提示词的【友军通讯录】中查找对方的准确名字。严禁委派给当前节点自己！", "parameters": { "type": "object", "properties": { "user_name": { "type": "string", "description": "目标节点的名称，例如 '树莓派'" }, "task_message": { "type": "string", "description": "你要交办的具体任务内容" } }, "required": ["user_name", "task_message"] } } }
+    { "type": "function", "function": { "name": "delegate_task", "description": "向通讯录中的其他皮皮虾节点指派任务。请从系统提示词的【友军通讯录】中查找对方的准确名字。严禁委派给当前节点自己！", "parameters": { "type": "object", "properties": { "user_name": { "type": "string", "description": "目标节点的名称，例如 '树莓派'" }, "task_message": { "type": "string", "description": "你要交办的具体任务内容" } }, "required": ["user_name", "task_message"] } } },
+    { "type": "function", "function": { "name": "save_memory", "description": "当用户提到重要的个人信息、偏好设定、或者明确要求你'记住'某事时调用此工具。", "parameters": { "type": "object", "properties": { "content": { "type": "string", "description": "要保存的具体记忆内容" } }, "required": ["content"] } } },
+    { "type": "function", "function": { "name": "recall_memory", "description": "通过语义向量检索长期记忆库。当用户问'我之前说过什么'、'我的喜好'，或你需要回忆过去的上下文背景时调用。", "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "要检索的关键字或语义短语" } }, "required": ["query"] } } }
 ]
 """);
 //在没有找到合适的  搜索 api 之前先注释
@@ -149,7 +150,7 @@ List<ChatMessage> GetHistory(string user)
     return list;
 }
 using var client = new HttpClient();
-client.Timeout = TimeSpan.FromMinutes(10);
+client.Timeout = TimeSpan.FromHours(1);
 const string CancelledMsg = "\n[任务已取消]";
 bool selfUpdateRequested = false;
 // ========================== 6. 启动后台服务 (调度 + WebUI) ==========================
@@ -353,7 +354,21 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
         ? GlobalConfig.Models[modelIndex]
         : (GlobalConfig.Models?.FirstOrDefault() ?? new ModelConfig());
     var activeModel = !string.IsNullOrEmpty(currentModelCfg.Model) ? currentModelCfg.Model : "qwen3.5-plus";
-    var activeEndpoint = !string.IsNullOrEmpty(currentModelCfg.Endpoint) ? currentModelCfg.Endpoint : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+
+    // 默认值改为不带后缀的 v1
+    var rawEndpoint = !string.IsNullOrEmpty(currentModelCfg.Endpoint) ? currentModelCfg.Endpoint : "https://dashscope.aliyuncs.com/compatible-mode/v1";
+
+    // 自动清洗可能残留的旧版后缀，提取纯净的 API Base
+    string apiBase = rawEndpoint.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)
+        ? rawEndpoint.Substring(0, rawEndpoint.Length - 17)
+        : rawEndpoint;
+    apiBase = apiBase.TrimEnd('/');
+
+    // 聊天端点
+    string chatEndpoint = apiBase + "/chat/completions";
+    // 这里顺手为你后续的 Embedding 提前准备好变量
+    string embeddingEndpoint = apiBase + "/embeddings";
+
     var activeApiKey = currentModelCfg.ApiKey;
     using var taskCts = new CancellationTokenSource();
     userCts[username] = taskCts;
@@ -410,8 +425,13 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                      {{sudoInstruction}}
 
                                      【记忆管理架构】：
-                                     [技能调用策略] 下方列表包含了本地已安装的技能和简短摘要。当用户的需求需要用到某个技能时，你必须先调用 read_file 工具，读取该技能目录下的 skill.md 文件以获取完整的对接文档，然后再根据文档指导进行下一步操作。绝对不要凭空猜测调用方式！
-                                     
+                                     [技能调用与经验沉淀策略] 
+                                     1. 检索：查阅下方已安装技能的摘要。
+                                     2. 实战：若需使用某技能，优先用 read_file 读取其目录下的 experience.txt（实战干货）。若没有，再去读 skill.md（官方文档）。
+                                     3. 沉淀与进化：当你【成功跑通】某技能的具体功能并解决报错后，必须将经验沉淀到 experience.txt。
+                                         - 强制 SOP：① 必须先 read_file 读取现有的 experience.txt。② 在脑内将新经验按【具体调用的方法/子命令】分类，与老经验进行合并、去重、纠错。③ 使用 write_file 将合并后的新内容完整覆写回去。
+                                         - 内容格式：绝对不要写废话！按 Markdown 结构记录：`### 方法名` -> `- 核心测试命令` -> `- 避坑/报错解决指南`。拒绝简单粗暴的流水账追加。
+
                                      【身份认知】
                                      {{nodeIdentityStr}}
 
@@ -465,7 +485,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 {
                     // 注意：每次重试需要重新生成 StringContent，避免流被重复读取导致报错
                     var content = new StringContent(JsonSerializer.Serialize(payload, AppJsonContext.Default.LlmRequest), Encoding.UTF8, "application/json");
-                    var res = await client.PostAsync(activeEndpoint, content, taskCts.Token);
+                    var res = await client.PostAsync(chatEndpoint, content, taskCts.Token);
 
                     if (res.IsSuccessStatusCode)
                     {
@@ -576,6 +596,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         case "write_file": actionDesc = $"写入: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         case "search_content": actionDesc = $"搜索: {GetStrProp(tempArgs, "keyword")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         case "delegate_task": actionDesc = $"找同事: {GetStrProp(tempArgs, "user_name")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                        case "save_memory": actionDesc = $"写入记忆: {GetStrProp(tempArgs, "content")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                        case "recall_memory": actionDesc = $"检索记忆: {GetStrProp(tempArgs, "query")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
                         default: actionDesc = $"调用参数: {argsString}"; break;
                     }
                     Console.ResetColor();
@@ -584,6 +606,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     switch (fnName)
                     {
                         case "install_skill": result = await InstallSkill(GetStrProp(tempArgs, "slug"), username); break;
+                        case "save_memory": result = await SaveMemoryAsync(username, GetStrProp(tempArgs, "content"), embeddingEndpoint, activeApiKey); break;
+                        case "recall_memory": result = await RecallMemoryAsync(username, GetStrProp(tempArgs, "query"), embeddingEndpoint, activeApiKey); break;
                         case "finish_task":
                             requireReset = true;
                             result = "[系统提示] 上下文清理已预约，这将在你给出最后一句回复后执行。请现在用正常的自然语言向用户总结任务完成情况。";
@@ -691,6 +715,107 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
     }
     return finalAIResponse;
 }
+
+// ========================== 记忆引擎与向量检索 ==========================
+async Task<float[]?> GetEmbeddingAsync(string text, string endpoint, string apiKey)
+{
+    try
+    {
+        var req = new EmbeddingRequest { Input = text };
+        var content = new StringContent(JsonSerializer.Serialize(req, AppJsonContext.Default.EmbeddingRequest), Encoding.UTF8, "application/json");
+
+        using var embedClient = new HttpClient();
+        embedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+        var res = await embedClient.PostAsync(endpoint, content);
+        if (!res.IsSuccessStatusCode) return null;
+
+        var resJson = await res.Content.ReadAsStringAsync();
+        var embedRes = JsonSerializer.Deserialize(resJson, AppJsonContext.Default.EmbeddingResponse);
+
+        return embedRes?.Data?.FirstOrDefault()?.Embedding;
+    }
+    catch { return null; }
+}
+float CosineSimilarity(float[] v1, float[] v2)
+{
+    if (v1.Length != v2.Length) return 0;
+    float dot = 0, mag1 = 0, mag2 = 0;
+    for (int i = 0; i < v1.Length; i++)
+    {
+        dot += v1[i] * v2[i];
+        mag1 += v1[i] * v1[i];
+        mag2 += v2[i] * v2[i];
+    }
+    if (mag1 == 0 || mag2 == 0) return 0;
+    return dot / (float)(Math.Sqrt(mag1) * Math.Sqrt(mag2));
+}
+async Task<string> SaveMemoryAsync(string username, string content, string embedEndpoint, string apiKey)
+{
+    if (string.IsNullOrWhiteSpace(content)) return "[记忆失败] 内容为空";
+
+    var vector = await GetEmbeddingAsync(content, embedEndpoint, apiKey);
+    if (vector == null) return "[记忆失败] 无法获取 Embedding 向量，请检查模型端点是否支持 /embeddings 接口。";
+
+    string memoryDir = Path.Combine(recordsDir, "memories");
+    if (!Directory.Exists(memoryDir)) Directory.CreateDirectory(memoryDir);
+    string memFile = Path.Combine(memoryDir, $"{username}_memories.json");
+
+    lock (memFile)
+    {
+        var memories = new List<MemoryItem>();
+        if (File.Exists(memFile))
+        {
+            try { memories = JsonSerializer.Deserialize(File.ReadAllText(memFile, Encoding.UTF8), AppJsonContext.Default.ListMemoryItem) ?? new(); } catch { }
+        }
+
+        memories.Add(new MemoryItem { Content = content, Vector = vector });
+        File.WriteAllText(memFile, JsonSerializer.Serialize(memories, AppJsonContext.Default.ListMemoryItem), Encoding.UTF8);
+    }
+    return $"[记忆已存储] 已将该事项转化为 {vector.Length} 维向量并存入你的长期记忆库。";
+}
+
+// 4. 提取记忆 (RAG 语义检索)
+async Task<string> RecallMemoryAsync(string username, string query, string embedEndpoint, string apiKey)
+{
+    if (string.IsNullOrWhiteSpace(query)) return "[检索失败] 查询关键字为空";
+
+    string memoryDir = Path.Combine(recordsDir, "memories");
+    string memFile = Path.Combine(memoryDir, $"{username}_memories.json");
+    if (!File.Exists(memFile)) return "[记忆库为空] 当前用户没有存储过任何长期记忆。";
+
+    var memories = new List<MemoryItem>();
+    lock (memFile)
+    {
+        try { memories = JsonSerializer.Deserialize(File.ReadAllText(memFile, Encoding.UTF8), AppJsonContext.Default.ListMemoryItem) ?? new(); } catch { }
+    }
+
+    if (memories.Count == 0) return "[记忆库为空] 当前用户没有存储过任何长期记忆。";
+
+    // 把用户的提问也转化为向量
+    var queryVector = await GetEmbeddingAsync(query, embedEndpoint, apiKey);
+    if (queryVector == null) return "[检索失败] 向量化查询词失败。";
+
+    // 遍历所有记忆，计算相似度
+    var results = memories
+        .Select(m => new { Memory = m, Score = CosineSimilarity(queryVector, m.Vector) })
+        .Where(x => x.Score > 0.4f) // 设置一个阈值，太低的不相关
+        .OrderByDescending(x => x.Score)
+        .Take(3) // 只提取最相关的 3 条记忆
+        .ToList();
+
+    if (results.Count == 0) return $"[未找到相关记忆] 关于“{query}”，记忆库中没有高度匹配的内容。";
+
+    var sb = new StringBuilder();
+    sb.AppendLine($"[成功检索到 {results.Count} 条高度相关的记忆]:");
+    foreach (var r in results)
+    {
+        sb.AppendLine($"- ({r.Memory.Timestamp}) {r.Memory.Content} (相似度: {r.Score:F2})");
+    }
+    return sb.ToString();
+}
+
+
 // ========================== 11. 定时调度器守护逻辑 ==========================
 async Task ScheduleLoop()
 {
@@ -799,15 +924,16 @@ string GetInstalledSkillsContext(string username)
         {
             try
             {
-                sb.AppendLine($"  技能功能摘要: {File.ReadAllText(summaryPath, Encoding.UTF8).Trim()}");
-                sb.AppendLine($"  (如需使用此技能，请务必先用 read_file 读取 {absolutePath}/skill.md)");
+                sb.AppendLine($"  功能摘要: {File.ReadAllText(summaryPath, Encoding.UTF8).Trim()}");
+                sb.AppendLine($"  (调用指引: 优先用 read_file 读取 {absolutePath}/experience.txt。若该经验文件不存在或无法解决问题，再去读 skill.md)");
+                sb.AppendLine($"  (自我进化要求: 成功跑通该技能的某个具体方法或排坑后，【必须】先用 read_file 读取 {absolutePath}/experience.txt。在脑内将新经验按该“具体方法”合并去重，剔除冗余信息后，再用 write_file 结构化覆写回去。决不能不读文件就闭眼追加！)");
             }
             catch { }
         }
         else
         {
-            sb.AppendLine($"  技能功能摘要: [未生成摘要]");
-            sb.AppendLine($"  说明：该技能已安装。请先 read_file 查看 {absolutePath}/skill.md，然后使用 write_file 在此目录下生成一个名为 summary.txt 的文件，里面只写一句话功能概括即可。");
+            sb.AppendLine($"  功能摘要: [未生成摘要]");
+            sb.AppendLine($"  说明：该技能已安装。请先 read_file 查看 {absolutePath}/skill.md，然后使用 write_file 在此目录下生成 summary.txt(一句话简介)。");
         }
     }
     return sb.Length > 0 ? sb.ToString() : "当前未安装任何专属技能";
@@ -815,6 +941,13 @@ string GetInstalledSkillsContext(string username)
 
 async Task Think(string username, CancellationToken ct)
 {
+    // 【核心修复】：检测到输出被重定向（如 nohup 或写入文件）时，直接静默挂起，不再向日志狂刷字符
+    if (Console.IsOutputRedirected)
+    {
+        try { await Task.Delay(-1, ct); } catch { }
+        return;
+    }
+
     Console.ForegroundColor = ConsoleColor.Cyan;
     for (int i = 0; !ct.IsCancellationRequested; i++)
     {
@@ -942,7 +1075,7 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
         var lastOutputTime = DateTime.UtcNow;
         var startTime = DateTime.UtcNow;     // 新增：记录绝对起点时间
         var idleTimeoutMs = 60000 * 3;       // 60秒无任何输出判定卡死
-        var absoluteTimeoutMs = 300000 * 2;      // 新增：绝对超时时间，最长允许跑 5 分钟 (300秒)
+        var absoluteTimeoutMs = 3600000;      // 允许终端命令最长跑 1 小时
         var isKilledByWatchdog = false;
 
         // 新增：最大输出行数防御，防止内存 OOM
@@ -958,7 +1091,7 @@ async Task<string> RunCmd(string? cmd, Action<string, string>? pushUpdate, bool 
             if (Interlocked.Increment(ref currentLines) > MaxLinesLimit)
             {
                 if (currentLines == MaxLinesLimit + 1)
-                {
+                 {
                     var warn = "\n[系统拦截] ⚠️ 输出日志超过 5000 行限制，已自动掐断后续输出截获以保护内存...";
                     Console.WriteLine(warn);
                     outputBuilder.AppendLine(warn);
@@ -1242,7 +1375,9 @@ async Task<string> InstallSkill(string? slug, string username)
         if (File.Exists(mdPath))
         {
             sb.AppendLine($"📄 发现 skill.md。绝对路径为: {absolutePath}/skill.md");
-            sb.AppendLine("[系统指令] 技能安装已完成。请立刻调用 `read_file` 工具读取上述 skill.md 文件了解该技能。随后，调用 `write_file` 工具在同目录下生成一个名为 `summary.txt` 的文件，用一句话（20字以内）总结该技能的作用，作为未来的轻量级索引。");
+            sb.AppendLine($"[系统指令] 技能安装已完成。请立刻调用 `read_file` 工具读取上述 skill.md 文件了解基础功能。");
+            sb.AppendLine($"随后，调用 `write_file` 在同目录下仅生成一个 `summary.txt`，用一句话（20字以内）总结该技能的作用，作为未来的轻量级索引。");
+            sb.AppendLine($"【警告】此时绝对不要生成 experience.txt！真正的使用经验必须等你在未来的任务中，真正调用并成功运行该技能后，再进行总结。");
         }
         else sb.AppendLine("⚠️ 未找到 skill.md，你可能需要自行摸索或使用 read_file 去查看文件夹。");
     }
@@ -3261,8 +3396,11 @@ string GetWebUIHtml()
                             <input type="text" class="cfg-model" value="${escapeHtml(m.Model)}" placeholder="e.g. qwen3.5-plus" />
                         </div>
                         <div class="form-group">
-                            <label>端点地址 (Endpoint)</label>
-                            <input type="text" class="cfg-endpoint" value="${escapeHtml(m.Endpoint)}" placeholder="https://..." />
+                            <label>端点地址 (API Base)</label>
+                            <div style="display: flex; align-items: stretch;">
+                                <input type="text" class="cfg-endpoint" value="${escapeHtml((m.Endpoint || '').replace(/\/chat\/completions\/?$/i, '').trim())}" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" style="flex: 1; border-top-right-radius: 0; border-bottom-right-radius: 0;" />
+                                <span style="display: flex; align-items: center; padding: 0 12px; background: var(--glass-stroke); border: 1px solid var(--input-border); border-left: none; border-top-right-radius: 8px; border-bottom-right-radius: 8px; color: var(--text-muted); font-size: 0.9em; white-space: nowrap; user-select: none;">/chat/completions</span>
+                            </div>
                         </div>
                         </div>
                         <div class="form-group">
@@ -4054,6 +4192,30 @@ public class PushMsg
     [JsonPropertyName("type")] public string Type { get; set; } = "";
     [JsonPropertyName("content")] public string Content { get; set; } = "";
 }
+
+public class MemoryItem
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    [JsonPropertyName("timestamp")] public string Timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+    [JsonPropertyName("content")] public string Content { get; set; } = "";
+    [JsonPropertyName("vector")] public float[] Vector { get; set; } = [];
+}
+
+public class EmbeddingRequest
+{
+    [JsonPropertyName("model")] public string Model { get; set; } = "text-embedding-v3"; // 阿里/OpenAI通用向量模型名
+    [JsonPropertyName("input")] public string Input { get; set; } = "";
+}
+
+public class EmbeddingResponse
+{
+    [JsonPropertyName("data")] public List<EmbeddingData>? Data { get; set; }
+}
+
+public class EmbeddingData
+{
+    [JsonPropertyName("embedding")] public float[]? Embedding { get; set; }
+}
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(AppConfig))]
@@ -4067,5 +4229,9 @@ public class PushMsg
 [JsonSerializable(typeof(PushMsg))]
 [JsonSerializable(typeof(ModelConfig))]
 [JsonSerializable(typeof(Dictionary<string, PeerNodeInfo>))]
+[JsonSerializable(typeof(MemoryItem))]
+[JsonSerializable(typeof(List<MemoryItem>))]
+[JsonSerializable(typeof(EmbeddingRequest))]
+[JsonSerializable(typeof(EmbeddingResponse))]
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNameCaseInsensitive = true)]
 internal partial class AppJsonContext : JsonSerializerContext { }
