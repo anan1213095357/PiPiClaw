@@ -446,7 +446,9 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
 
                                      【本地已安装的扩展技能及绝对路径说明】：
                                      {{GetInstalledSkillsContext(username)}}
+                                     注意：本地技能优先级高于队友能力。如果本地没有这个技能再去找相关队友。
                                      """;
+
             var payloadMessages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPromptText } };
             IEnumerable<ChatMessage> recentMessages;
             if (useFullContext)
