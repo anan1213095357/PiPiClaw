@@ -410,7 +410,9 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 : "";
 
             var peersStr = (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.Count > 0)
-                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p => $"- 【{p.Key}】皮皮虾\n  能力说明: 【{p.Value.Role}】{p.Value.Description}"))
+                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p =>
+                    $"- 【{p.Key}】皮皮虾\n  能力说明: 【{p.Value.Role}】{p.Value.Description}" +
+                    (!string.IsNullOrWhiteSpace(p.Value.Resume) ? $"\n  详细介绍: {p.Value.Resume}" : "")))
                 : "暂无已知友军节点";
 
             var customPrompt = !string.IsNullOrWhiteSpace(GlobalConfig.SystemPrompt)
@@ -3447,7 +3449,7 @@ string GetWebUIHtml()
         function getUrlsFromUI() {
             return Array.from(document.querySelectorAll('.cfg-url')).map(input => input.value.trim());
         }
-        // --- 新增：友军节点逻辑 ---
+
         function renderPeerNodesConfigUI(peerNodes) {
             const container = document.getElementById('peerNodesConfigContainer');
             container.innerHTML = '';
@@ -3456,12 +3458,13 @@ string GetWebUIHtml()
                     const url = info.Url || info.url || '';
                     const role = info.Role || info.role || '';
                     const desc = info.Description || info.description || '';
-                    addPeerNodeRow(key, url, role, desc);
+                    const resume = info.Resume || info.resume || ''; // 👈 新增提取简历
+                    addPeerNodeRow(key, url, role, desc, resume);
                 }
             }
         }
 
-        function addPeerNodeRow(key = '', url = '', role = '', desc = '') {
+        function addPeerNodeRow(key = '', url = '', role = '', desc = '', resume = '') {
             const container = document.getElementById('peerNodesConfigContainer');
             container.insertAdjacentHTML('beforeend', `
                 <div class="config-model-item" style="padding: 10px 15px; margin-bottom: 10px;">
@@ -3483,6 +3486,10 @@ string GetWebUIHtml()
                             <label>能力说明 (Description)</label>
                             <input type="text" class="cfg-peer-desc" value="${escapeHtml(desc)}" placeholder="负责控制灯光或信息检索..." />
                         </div>
+                        <div class="form-group" style="margin-top: 10px; grid-column: span 2;">
+                            <label>个人简历/详细人设 (Resume)</label>
+                            <textarea class="cfg-peer-resume" placeholder="详细描述该Agent的背景、性格、专业技能等..." style="width: 100%; min-height: 60px; padding: 10px; border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main); font-family: var(--font-mono); resize: vertical;">${escapeHtml(resume)}</textarea>
+                        </div>
                     </div>
                 </div>
             `);
@@ -3496,8 +3503,9 @@ string GetWebUIHtml()
                 const url = el.querySelector('.cfg-peer-url').value.trim();
                 const role = el.querySelector('.cfg-peer-role').value.trim();
                 const desc = el.querySelector('.cfg-peer-desc').value.trim();
+                const resume = el.querySelector('.cfg-peer-resume').value.trim(); // 👈 抓取简历数据
                 if (name && url) {
-                    peerNodes[name] = { Url: url, Role: role, Description: desc };
+                    peerNodes[name] = { Url: url, Role: role, Description: desc, Resume: resume };
                 }
             });
             return peerNodes;
@@ -4130,6 +4138,7 @@ public class PeerNodeInfo
     [JsonPropertyName("Url")] public string Url { get; set; } = "";
     [JsonPropertyName("Role")] public string Role { get; set; } = "";
     [JsonPropertyName("Description")] public string Description { get; set; } = "";
+    [JsonPropertyName("Resume")] public string Resume { get; set; } = "";
     [JsonPropertyName("ModelIndex")] public int ModelIndex { get; set; } = 0;
 }
 public class TaskItem
