@@ -1893,6 +1893,154 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                     }
                 }
                 break;
+            // --- 导出：打包当前员工数据为 ZIP 流 ---
+            case "/api/export" when req.HttpMethod == "GET":
+                {
+                    // 1. 生成临时隔离目录
+                    string tempDir = Path.Combine(Path.GetTempPath(), $"export_{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(tempDir);
+
+                    try
+                    {
+                        // 2. 组装基础 Profile
+                        var profile = new AgentProfile { Name = username };
+                        if (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.TryGetValue(username, out var info))
+                        {
+                            profile.Role = info.Role ?? "";
+                            profile.Description = info.Description ?? "";
+                            profile.Resume = info.Resume ?? "";
+                            profile.ModelIndex = info.ModelIndex;
+                        }
+                        File.WriteAllText(Path.Combine(tempDir, "profile.json"), JsonSerializer.Serialize(profile, AppJsonContext.Default.AgentProfile), Encoding.UTF8);
+
+                        // 3. 拷贝历史和记忆
+                        var histPath = Path.Combine(recordsDir, $"{username}_history.json");
+                        if (File.Exists(histPath)) File.Copy(histPath, Path.Combine(tempDir, "history.json"));
+
+                        var memPath = Path.Combine(recordsDir, "memories", $"{username}_memories.json");
+                        if (File.Exists(memPath)) File.Copy(memPath, Path.Combine(tempDir, "memories.json"));
+
+                        // 4. 拷贝专属技能包文件夹
+                        var skillsDir = Path.Combine(AppContext.BaseDirectory, "skills", username);
+                        if (Directory.Exists(skillsDir))
+                        {
+                            string targetSkills = Path.Combine(tempDir, "skills");
+                            Directory.CreateDirectory(targetSkills);
+                            foreach (var file in Directory.GetFiles(skillsDir, "*.*", SearchOption.AllDirectories))
+                            {
+                                var rel = file.Substring(skillsDir.Length).TrimStart(Path.DirectorySeparatorChar);
+                                var dest = Path.Combine(targetSkills, rel);
+                                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                                File.Copy(file, dest);
+                            }
+                        }
+
+                        // 5. 纯系统命令打包 ZIP (极致 AOT)
+                        string zipPath = Path.Combine(Path.GetTempPath(), $"pkg_{Guid.NewGuid():N}.zip");
+                        using var p = new Process();
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        {
+                            p.StartInfo = new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -Command \"Compress-Archive -Path '{tempDir}\\*' -DestinationPath '{zipPath}' -Force\"") { CreateNoWindow = true };
+                        }
+                        else
+                        {
+                            // Linux/Mac 下进入目录执行 zip (确保系统安装了 zip 工具)
+                            p.StartInfo = new ProcessStartInfo("zip", $"-r -q \"{zipPath}\" .") { CreateNoWindow = true, WorkingDirectory = tempDir };
+                        }
+                        p.Start();
+                        p.WaitForExit();
+
+                        // 6. 将 Profile 塞进 Header，把 ZIP 以二进制流写回前端
+                        string profileBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(profile, AppJsonContext.Default.AgentProfile)));
+                        res.Headers.Add("X-Agent-Profile", profileBase64);
+                        res.ContentType = "application/zip";
+
+                        using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read);
+                        res.ContentLength64 = fs.Length;
+                        await fs.CopyToAsync(res.OutputStream);
+
+                        // 扫尾工作
+                        fs.Close();
+                        File.Delete(zipPath);
+                    }
+                    finally
+                    {
+                        Directory.Delete(tempDir, true);
+                    }
+                    break;
+                }
+
+            // --- 导入：接收 ZIP 流并解包 (重构你原有的解压思路) ---
+            case "/api/import" when req.HttpMethod == "POST":
+                {
+                    string zipPath = Path.Combine(Path.GetTempPath(), $"import_{Guid.NewGuid():N}.zip");
+                    string tempDir = Path.Combine(Path.GetTempPath(), $"extract_{Guid.NewGuid():N}");
+
+                    try
+                    {
+                        // 1. 保存传过来的 ZIP 二进制流
+                        using (var fs = new FileStream(zipPath, FileMode.Create))
+                        {
+                            await req.InputStream.CopyToAsync(fs);
+                        }
+
+                        // 2. 纯系统命令解压 (与你 install_skill 保持绝对一致)
+                        Directory.CreateDirectory(tempDir);
+                        using var p = new Process();
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        {
+                            p.StartInfo = new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -Command \"Expand-Archive -Path '{zipPath}' -DestinationPath '{tempDir}' -Force\"") { CreateNoWindow = true };
+                        }
+                        else
+                        {
+                            p.StartInfo = new ProcessStartInfo("unzip", $"-o \"{zipPath}\" -d \"{tempDir}\"") { CreateNoWindow = true };
+                        }
+                        p.Start();
+                        p.WaitForExit();
+
+                        // 3. 将解压出来的文件物归原主
+                        string histTemp = Path.Combine(tempDir, "history.json");
+                        if (File.Exists(histTemp)) File.Copy(histTemp, Path.Combine(recordsDir, $"{username}_history.json"), true);
+
+                        string memTemp = Path.Combine(tempDir, "memories.json");
+                        if (File.Exists(memTemp))
+                        {
+                            var memDir = Path.Combine(recordsDir, "memories");
+                            if (!Directory.Exists(memDir)) Directory.CreateDirectory(memDir);
+                            File.Copy(memTemp, Path.Combine(memDir, $"{username}_memories.json"), true);
+                        }
+
+                        string skillsTemp = Path.Combine(tempDir, "skills");
+                        if (Directory.Exists(skillsTemp))
+                        {
+                            var skillsDir = Path.Combine(AppContext.BaseDirectory, "skills", username);
+                            if (Directory.Exists(skillsDir)) Directory.Delete(skillsDir, true);
+
+                            // C# 没有原生的目录跨盘 Move，所以手工递归拷贝更稳
+                            Directory.CreateDirectory(skillsDir);
+                            foreach (var file in Directory.GetFiles(skillsTemp, "*.*", SearchOption.AllDirectories))
+                            {
+                                var rel = file.Substring(skillsTemp.Length).TrimStart(Path.DirectorySeparatorChar);
+                                var dest = Path.Combine(skillsDir, rel);
+                                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                                File.Copy(file, dest, true);
+                            }
+                        }
+
+                        userHistories.TryRemove(username, out _); // 刷新内存记忆
+
+                        res.ContentType = "application/json";
+                        await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("{\"status\":\"ok\"}"));
+                    }
+                    finally
+                    {
+                        if (File.Exists(zipPath)) File.Delete(zipPath);
+                        if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+                    }
+                    break;
+                }
+
+
             default:
                 res.StatusCode = 404;
                 break;
@@ -4225,6 +4373,8 @@ public class EmbeddingData
 {
     [JsonPropertyName("embedding")] public float[]? Embedding { get; set; }
 }
+
+
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(AppConfig))]
@@ -4242,5 +4392,19 @@ public class EmbeddingData
 [JsonSerializable(typeof(List<MemoryItem>))]
 [JsonSerializable(typeof(EmbeddingRequest))]
 [JsonSerializable(typeof(EmbeddingResponse))]
+[JsonSerializable(typeof(AgentProfile))]
+[JsonSerializable(typeof(List<AgentProfile>))]
+
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNameCaseInsensitive = true)]
 internal partial class AppJsonContext : JsonSerializerContext { }
+
+
+public class AgentProfile
+{
+    public string Name { get; set; } = "";
+    public string Role { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Resume { get; set; } = "";
+    public int ModelIndex { get; set; } = 0;
+}
+
