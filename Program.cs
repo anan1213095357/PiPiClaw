@@ -496,30 +496,137 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
 
                                      【本地已安装的扩展技能及绝对路径说明】：
                                          {{GetInstalledSkillsContext(username)}}
-                                         注意：本地技能优先级高于队友能力。如果本地没有这个技能再去找相关队友。
+                                         本地技能优先级高于队友能力。如果本地没有这个技能再去找相关队友。
+
+                                     【记忆与上下文折叠机制 (极其重要)】
+                                        1. 注意：你每次回复时，必须先使用 <Summary>摘要文本</Summary> 标签包裹 10 到 20 字的本轮执行摘要，然后再输出给用户的详细正文。
+                                        2. 注意：如果被折叠内有结果文件 优先调用 readfile 去读取被折叠内容，尽量不要重复去做以前做过的事。比如之前看桌面记录然后被折叠起来，后面就不要再执行命令去看桌面记录而是应该 readfile 去看历史记录。这是一个例子，你不管做什么都要参考这个例子。切勿执行多次已执行过的命令。
                                      """;
 
             var payloadMessages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPromptText } };
-            IEnumerable<ChatMessage> recentMessages;
-            if (useFullContext)
+            // ========================== 核心修复：滑动窗口折叠 (仅拦截发给大模型的 Payload) ==========================
+            var clonedHistory = history.Select(m => m.DeepClone()).ToList();
+            int totalUserTurns = clonedHistory.Count(m => m.Role == "user");
+
+            // 只要历史对话超过 5 轮，就开始折叠最早的回合，始终保留最近的 4 轮上下文活跃
+            int turnsToFold = totalUserTurns - 4;
+
+            if (turnsToFold > 0)
             {
-                recentMessages = history;
+                int currentTurn = 0;
+                var optimizedHistory = new List<ChatMessage>();
+                var turnBuffer = new List<ChatMessage>();
+
+                for (int i = 0; i < clonedHistory.Count; i++)
+                {
+                    var mssage = clonedHistory[i];
+                    if (mssage.Role == "user") currentTurn++;
+
+                    // 【核心逻辑】：如果在需要被折叠的旧回合窗口内
+                    if (currentTurn <= turnsToFold)
+                    {
+                        if (mssage.Role == "user")
+                        {
+                            optimizedHistory.Add(mssage); // 永远保留 User 的原始需求
+                            turnBuffer.Clear();
+                        }
+                        else
+                        {
+                            // 收集当前回合的所有 assistant 和 tool 消息
+                            turnBuffer.Add(mssage);
+
+                            // 判断是否是该回合的最后一条消息 (结尾，或是下一条就是新的 User 提问)
+                            bool isTurnEnd = (i == clonedHistory.Count - 1) || (clonedHistory[i + 1].Role == "user");
+                            if (isTurnEnd && turnBuffer.Count > 0)
+                            {
+                                // 1. 提取本回合的摘要作为 Key
+                                string sumText = "未知历史回合";
+                                var sumMsg = turnBuffer.LastOrDefault(m => m.Role == "assistant" && m.Content != null && m.Content.Contains("<Summary>"));
+                                if (sumMsg != null)
+                                {
+                                    string sTag = "<Summary>"; string eTag = "</Summary>";
+                                    int sIdx = sumMsg.Content.IndexOf(sTag, StringComparison.OrdinalIgnoreCase);
+                                    int eIdx = sumMsg.Content.IndexOf(eTag, StringComparison.OrdinalIgnoreCase);
+                                    if (sIdx >= 0 && eIdx > sIdx)
+                                    {
+                                        sumText = sumMsg.Content.Substring(sIdx + sTag.Length, eIdx - sIdx - sTag.Length).Trim();
+                                    }
+                                }
+
+                                // 2. 将 assistant 与 tool 打包折叠为完整的 Content 上下文
+                                var sb = new StringBuilder();
+                                sb.AppendLine($"【摘要 Key】: {sumText}");
+                                sb.AppendLine("【详细折叠上下文 Content】:");
+                                foreach (var tb in turnBuffer)
+                                {
+                                    if (tb.Role == "assistant")
+                                    {
+                                        if (tb.ToolCalls != null && tb.ToolCalls.Count > 0)
+                                        {
+                                            sb.AppendLine($"\n[AI 调用工具]: {string.Join(", ", tb.ToolCalls.Select(tc => tc.Function.Name))}");
+                                            sb.AppendLine($"[参数/思考]: {tb.ReasoningContent ?? tb.Content ?? "无"}");
+                                        }
+                                        else
+                                        {
+                                            sb.AppendLine($"\n[AI 回复结论]: {tb.Content}");
+                                        }
+                                    }
+                                    else if (tb.Role == "tool")
+                                    {
+                                        sb.AppendLine($"[工具执行结果]:\n{tb.Content}");
+                                    }
+                                }
+
+                                // 3. 落盘：以摘要为依据生成独立的日志文件，确保 AI 能通过 Key 检索到
+                                string detailDir = Path.Combine(recordsDir, "details", username);
+                                Directory.CreateDirectory(detailDir);
+
+                                // 生成哈希防止重复覆盖，生成 safeKey 保证文件名合法
+                                string hash = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(sumText + sb.Length))).Substring(0, 8);
+                                string safeKey = string.Join("_", sumText.Split(Path.GetInvalidFileNameChars())).Replace(" ", "_");
+                                if (safeKey.Length > 30) safeKey = safeKey.Substring(0, 30);
+
+                                string fileName = $"fold_{safeKey}_{hash}.txt";
+                                string filePath = Path.Combine(detailDir, "folds", fileName);
+                                if (!Directory.Exists(Path.Combine(detailDir, "folds")))
+                                    Directory.CreateDirectory(Path.Combine(detailDir, "folds"));
+
+                                // 防抖：如果这回合已经被持久化过了，就不必重复写磁盘
+                                if (!File.Exists(filePath))
+                                {
+                                    File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+                                }
+
+                                optimizedHistory.Add(new ChatMessage
+                                {
+                                    Role = "assistant",
+                                    Content = $"[旧轮次已折叠]\n摘要内容: {sumText}\n(注: 次记录已放置 {filePath} 文件中。通过 readfile 读取这个摘要的详细记录。"
+                                });
+
+                                turnBuffer.Clear();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // 【保留窗口内】：近期活跃的消息不需要折叠，但为了省 Token 依然清空大模型的内部脑补 reasoning_content
+                        if (mssage.Role == "assistant") mssage.ReasoningContent = null;
+                        optimizedHistory.Add(mssage);
+                    }
+                }
+                payloadMessages.AddRange(optimizedHistory);
             }
             else
             {
-                var seenUser = 0;
-                var startIndex = 0;
-                for (var i = history.Count - 1; i >= 0; i--)
+                // 如果还不到折叠阈值，不需要折叠，但照样清理 reasoning_content
+                foreach (var m in clonedHistory)
                 {
-                    if (history[i].Role != "user") continue;
-                    seenUser++;
-                    if (seenUser <= 3) continue;
-                    startIndex = i + 1;
-                    break;
+                    if (m.Role == "assistant") m.ReasoningContent = null;
+                    payloadMessages.Add(m);
                 }
-                recentMessages = history.Skip(startIndex);
             }
-            foreach (var m in recentMessages) payloadMessages.Add(m.DeepClone());
+            // =================================================================================
+
             var payload = new LlmRequest
             {
                 Model = activeModel,
@@ -527,6 +634,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 Tools = toolsDoc.RootElement,
                 EnableSearch = true
             };
+            client.DefaultRequestHeaders.Clear();
+            client.DefaultRequestHeaders.Add("User-Agent", "pipiclaw");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", activeApiKey);
             string responseString = "";
             bool isSuccess = false;
@@ -535,6 +644,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
 
             for (int retry = 0; retry < maxRetries; retry++)
             {
+
+
                 try
                 {
                     // 注意：每次重试需要重新生成 StringContent，避免流被重复读取导致报错
@@ -577,7 +688,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                         Console.ForegroundColor = ConsoleColor.DarkYellow;
                         Console.WriteLine($"\n[网络抖动] {ex.Message}，正在进行第 {retry + 1} 次重试...");
                         Console.ResetColor();
-                        PushUpdate?.Invoke("tool_result", $"[网络抖动] 请求网关失败，准备第 {retry + 1} 次重试...");
+                        PushUpdate?.Invoke("tool_result", $"[网络抖动] 请求网关失败，准备第 {retry + 1} 次重试...{ex.Message}");
                         await Task.Delay(2000, taskCts.Token);
                     }
                 }
@@ -624,138 +735,147 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             {
                 foreach (var call in toolCalls)
                 {
-                    var fnName = call.Function.Name;
-                    var argsString = call.Function.Arguments;
-                    JsonElement? tempArgs = null;
-                    try { tempArgs = JsonDocument.Parse(argsString).RootElement; } catch { }
-                    string GetStrProp(JsonElement? el, string key)
-                    {
-                        if (el.HasValue && el.Value.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String) return prop.GetString() ?? "";
-                        return "";
-                    }
-                    bool GetBoolProp(JsonElement? el, string key)
-                    {
-                        if (el.HasValue && el.Value.TryGetProperty(key, out var prop) && (prop.ValueKind == JsonValueKind.True || prop.ValueKind == JsonValueKind.False)) return prop.GetBoolean();
-                        return false;
-                    }
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"\n[PiPiClaw 正在调用]: {fnName}");
-                    Console.ResetColor();
-                    string actionDesc = "";
-                    Console.ForegroundColor = ConsoleColor.DarkCyan;
-                    switch (fnName)
-                    {
-                        case "execute_command": actionDesc = $"执行: {GetStrProp(tempArgs, "command")} (is_background: {GetBoolProp(tempArgs, "is_background")})"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "read_file": actionDesc = $"读取: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "write_file": actionDesc = $"写入: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "search_content": actionDesc = $"搜索: {GetStrProp(tempArgs, "keyword")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "delegate_task": actionDesc = $"找同事: {GetStrProp(tempArgs, "user_name")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "save_memory": actionDesc = $"写入记忆: {GetStrProp(tempArgs, "content")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        case "recall_memory": actionDesc = $"检索记忆: {GetStrProp(tempArgs, "query")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
-                        default: actionDesc = $"调用参数: {argsString}"; break;
-                    }
-                    Console.ResetColor();
-                    PushUpdate?.Invoke("tool", $"[调用工具] {fnName}\n{actionDesc}");
                     var result = "";
-                    switch (fnName)
+                    try
                     {
-                        case "install_skill": result = await InstallSkill(GetStrProp(tempArgs, "slug"), username); break;
-                        case "save_memory": result = await SaveMemoryAsync(username, GetStrProp(tempArgs, "content"), embeddingEndpoint, activeApiKey); break;
-                        case "recall_memory": result = await RecallMemoryAsync(username, GetStrProp(tempArgs, "query"), embeddingEndpoint, activeApiKey); break;
-                        case "finish_task":
-                            requireReset = true;
-                            result = "[系统提示] 上下文清理已预约，这将在你给出最后一句回复后执行。请现在用正常的自然语言向用户总结任务完成情况。";
-                            try
-                            {
-                                // 直接删当前用户的历史记录文件，historyPath 已经是完整路径了
-                                if (File.Exists(historyPath)) File.Delete(historyPath);
-                            }
-                            catch (Exception ex) { }
-                            PushUpdate?.Invoke("clear_chat", "");
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Console.WriteLine("[内部状态] Agent 判定任务结束，已预约清理上下文...");
-                            Console.ResetColor();
-                            break;
-                        case "add_scheduled_task":
-                            {
-                                int intervalMin = 0;
-                                if (tempArgs.HasValue && tempArgs.Value.TryGetProperty("interval_minutes", out var intProp) && intProp.ValueKind == JsonValueKind.Number)
-                                    intervalMin = intProp.GetInt32();
-                                // 👈 传入 username
-                                result = AddScheduledTask(username, GetStrProp(tempArgs, "execute_at"), GetStrProp(tempArgs, "user_intent"), intervalMin);
-                                break;
-                            }
-                        case "remove_scheduled_task":
-                            result = RemoveScheduledTask(username, GetStrProp(tempArgs, "task_id"));
-                            break;
-                        case "self_update": result = await SelfUpdate(); break;
-                        case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
-                        case "delegate_task": result = await DelegateTaskAsync(username, GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message"), GetStrProp(tempArgs, "task_id"), teamUrl, sop); break;
-                        case "update_project_board":
-                            try
-                            {
-                                if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法更新看板。"; break; }
-                                using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
-                                req.Content = new StringContent(argsString, Encoding.UTF8, "application/json");
-                                var res = await client.SendAsync(req);
 
-                                // 👉 修改此处的系统回传话术
-                                result = res.IsSuccessStatusCode
-                                    ? "[系统] 多项任务计划已成功写入看板。⚠️【系统强制指令】：请不要停止！现在请直接调用 delegate_task 把当前【阶段首个或首批需要立即执行】的任务派发给对应的 assignee！记得留言附带任务ID，并命令他们做完后自行标为 done。注意：如果是需要排队串行的后续任务，请先不要派发，保留在 todo 状态，等前置任务 done 了再说！"
-                                    : "[系统] 同步失败，中控不在线。";
-                            }
-                            catch { result = "[系统异常] 无法连接到中控服务器。"; }
-                            break;
+                        var fnName = call.Function.Name;
+                        var argsString = call.Function.Arguments;
+                        JsonElement? tempArgs = null;
+                        try { tempArgs = JsonDocument.Parse(argsString).RootElement; } catch { }
+                        string GetStrProp(JsonElement? el, string key)
+                        {
+                            if (el.HasValue && el.Value.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String) return prop.GetString() ?? "";
+                            return "";
+                        }
+                        bool GetBoolProp(JsonElement? el, string key)
+                        {
+                            if (el.HasValue && el.Value.TryGetProperty(key, out var prop) && (prop.ValueKind == JsonValueKind.True || prop.ValueKind == JsonValueKind.False)) return prop.GetBoolean();
+                            return false;
+                        }
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine($"\n[PiPiClaw 正在调用]: {fnName}");
+                        Console.ResetColor();
+                        string actionDesc = "";
+                        Console.ForegroundColor = ConsoleColor.DarkCyan;
+                        switch (fnName)
+                        {
+                            case "execute_command": actionDesc = $"执行: {GetStrProp(tempArgs, "command")} (is_background: {GetBoolProp(tempArgs, "is_background")})"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            case "read_file": actionDesc = $"读取: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            case "write_file": actionDesc = $"写入: {GetStrProp(tempArgs, "file_path")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            case "search_content": actionDesc = $"搜索: {GetStrProp(tempArgs, "keyword")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            case "delegate_task": actionDesc = $"找同事: {GetStrProp(tempArgs, "user_name")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            case "save_memory": actionDesc = $"写入记忆: {GetStrProp(tempArgs, "content")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            case "recall_memory": actionDesc = $"检索记忆: {GetStrProp(tempArgs, "query")}"; Console.WriteLine($"[Action] {actionDesc}"); break;
+                            default: actionDesc = $"调用参数: {argsString}"; break;
+                        }
+                        Console.ResetColor();
+                        PushUpdate?.Invoke("tool", $"[调用工具] {fnName}\n{actionDesc}");
 
-                        case "update_task_status":
-                            try
-                            {
-                                if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法更新看板。"; break; }
-
-                                // 使用安全的对象序列化，防止结果中的换行、双引号破坏 JSON 格式
-                                var updateObj = new ProjectBoard
+                        switch (fnName)
+                        {
+                            case "install_skill": result = await InstallSkill(GetStrProp(tempArgs, "slug"), username); break;
+                            case "save_memory": result = await SaveMemoryAsync(username, GetStrProp(tempArgs, "content"), embeddingEndpoint, activeApiKey); break;
+                            case "recall_memory": result = await RecallMemoryAsync(username, GetStrProp(tempArgs, "query"), embeddingEndpoint, activeApiKey); break;
+                            case "finish_task":
+                                requireReset = true;
+                                result = "[系统提示] 上下文清理已预约，这将在你给出最后一句回复后执行。请现在用正常的自然语言向用户总结任务完成情况。";
+                                try
                                 {
-                                    Tasks = new List<ProjectTask> {
+                                    // 直接删当前用户的历史记录文件，historyPath 已经是完整路径了
+                                    if (File.Exists(historyPath)) File.Delete(historyPath);
+                                }
+                                catch (Exception ex) { }
+                                PushUpdate?.Invoke("clear_chat", "");
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.WriteLine("[内部状态] Agent 判定任务结束，已预约清理上下文...");
+                                Console.ResetColor();
+                                break;
+                            case "add_scheduled_task":
+                                {
+                                    int intervalMin = 0;
+                                    if (tempArgs.HasValue && tempArgs.Value.TryGetProperty("interval_minutes", out var intProp) && intProp.ValueKind == JsonValueKind.Number)
+                                        intervalMin = intProp.GetInt32();
+                                    // 👈 传入 username
+                                    result = AddScheduledTask(username, GetStrProp(tempArgs, "execute_at"), GetStrProp(tempArgs, "user_intent"), intervalMin);
+                                    break;
+                                }
+                            case "remove_scheduled_task":
+                                result = RemoveScheduledTask(username, GetStrProp(tempArgs, "task_id"));
+                                break;
+                            case "self_update": result = await SelfUpdate(); break;
+                            case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
+                            case "delegate_task": result = await DelegateTaskAsync(username, GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message"), GetStrProp(tempArgs, "task_id"), teamUrl, sop); break;
+                            case "update_project_board":
+                                try
+                                {
+                                    if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法更新看板。"; break; }
+                                    using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
+                                    req.Content = new StringContent(argsString, Encoding.UTF8, "application/json");
+                                    var res = await client.SendAsync(req);
+
+                                    // 👉 修改此处的系统回传话术
+                                    result = res.IsSuccessStatusCode
+                                        ? "[系统] 多项任务计划已成功写入看板。⚠️【系统强制指令】：请不要停止！现在请直接调用 delegate_task 把当前【阶段首个或首批需要立即执行】的任务派发给对应的 assignee！记得留言附带任务ID，并命令他们做完后自行标为 done。注意：如果是需要排队串行的后续任务，请先不要派发，保留在 todo 状态，等前置任务 done 了再说！"
+                                        : "[系统] 同步失败，中控不在线。";
+                                }
+                                catch { result = "[系统异常] 无法连接到中控服务器。"; }
+                                break;
+
+                            case "update_task_status":
+                                try
+                                {
+                                    if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法更新看板。"; break; }
+
+                                    // 使用安全的对象序列化，防止结果中的换行、双引号破坏 JSON 格式
+                                    var updateObj = new ProjectBoard
+                                    {
+                                        Tasks = new List<ProjectTask> {
                                         new ProjectTask {
                                             Id = GetStrProp(tempArgs, "task_id"),
                                             Status = GetStrProp(tempArgs, "status"),
                                             Result = GetStrProp(tempArgs, "result")
                                         }
                                     }
-                                };
-                                var taskJson = JsonSerializer.Serialize(updateObj, AppJsonContext.Default.ProjectBoard);
+                                    };
+                                    var taskJson = JsonSerializer.Serialize(updateObj, AppJsonContext.Default.ProjectBoard);
 
-                                using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
-                                req.Content = new StringContent(taskJson, Encoding.UTF8, "application/json");
-                                var res = await client.SendAsync(req);
-                                result = res.IsSuccessStatusCode ? $"[系统] 任务 {GetStrProp(tempArgs, "task_id")} 状态与结果已成功同步至看板。" : "[系统] 同步失败。";
-                            }
-                            catch { result = "[系统异常] 无法连接到中控服务器。"; }
-                            break;
-                        case "delete_project_board":
-                            try
-                            {
-                                if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法删除看板。这可能是因为脱离了 Team 面板发起。"; break; }
-                                using var req = new HttpRequestMessage(HttpMethod.Delete, $"{teamUrl.TrimEnd('/')}/api/board");
-                                var res = await client.SendAsync(req);
-                                result = res.IsSuccessStatusCode ? "[系统] 项目看板已成功清空并结项。" : "[系统] 同步失败，中控不在线。";
-                            }
-                            catch { result = "[系统异常] 无法连接到中控服务器。"; }
-                            break;
-                        default:
-                            result = fnName switch
-                            {
-                                "read_file" => ReadFile(GetStrProp(tempArgs, "file_path")),
-                                "write_file" => WriteFile(GetStrProp(tempArgs, "file_path"), GetStrProp(tempArgs, "content"), GetStrProp(tempArgs, "old_content")),
-                                "read_local_image" => ReadImg(GetStrProp(tempArgs, "file_path")),
-                                "search_content" => SearchContent(GetStrProp(tempArgs, "directory"), GetStrProp(tempArgs, "keyword"), GetStrProp(tempArgs, "file_pattern")),
-                                _ => "[未知工具] 系统不支持此工具。"
-                            };
-                            break;
+                                    using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
+                                    req.Content = new StringContent(taskJson, Encoding.UTF8, "application/json");
+                                    var res = await client.SendAsync(req);
+                                    result = res.IsSuccessStatusCode ? $"[系统] 任务 {GetStrProp(tempArgs, "task_id")} 状态与结果已成功同步至看板。" : "[系统] 同步失败。";
+                                }
+                                catch { result = "[系统异常] 无法连接到中控服务器。"; }
+                                break;
+                            case "delete_project_board":
+                                try
+                                {
+                                    if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法删除看板。这可能是因为脱离了 Team 面板发起。"; break; }
+                                    using var req = new HttpRequestMessage(HttpMethod.Delete, $"{teamUrl.TrimEnd('/')}/api/board");
+                                    var res = await client.SendAsync(req);
+                                    result = res.IsSuccessStatusCode ? "[系统] 项目看板已成功清空并结项。" : "[系统] 同步失败，中控不在线。";
+                                }
+                                catch { result = "[系统异常] 无法连接到中控服务器。"; }
+                                break;
+                            default:
+                                result = fnName switch
+                                {
+                                    "read_file" => ReadFile(GetStrProp(tempArgs, "file_path")),
+                                    "write_file" => WriteFile(GetStrProp(tempArgs, "file_path"), GetStrProp(tempArgs, "content"), GetStrProp(tempArgs, "old_content")),
+                                    "read_local_image" => ReadImg(GetStrProp(tempArgs, "file_path")),
+                                    "search_content" => SearchContent(GetStrProp(tempArgs, "directory"), GetStrProp(tempArgs, "keyword"), GetStrProp(tempArgs, "file_pattern")),
+                                    _ => "[未知工具] 系统不支持此工具。"
+                                };
+                                break;
+                        }
+                        if (fnName != "execute_command")
+                        {
+                            PushUpdate?.Invoke("tool_result", result);
+                        }
                     }
-                    if (fnName != "execute_command")
+                    catch (Exception)
                     {
-                        PushUpdate?.Invoke("tool_result", result);
+                        Console.WriteLine();
                     }
                     var toolResultMsg = new ChatMessage
                     {
@@ -770,6 +890,22 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             else
             {
                 finalAIResponse = msg.Content ?? "";
+                string startTag = "<Summary>";
+                string endTag = "</Summary>";
+                int startIdx = finalAIResponse.IndexOf(startTag, StringComparison.OrdinalIgnoreCase);
+                int endIdx = finalAIResponse.IndexOf(endTag, StringComparison.OrdinalIgnoreCase);
+
+                if (startIdx >= 0 && endIdx > startIdx)
+                {
+                    string summary = finalAIResponse.Substring(startIdx + startTag.Length, endIdx - startIdx - startTag.Length).Trim();
+                    string detail = finalAIResponse.Remove(startIdx, endIdx + endTag.Length - startIdx).Trim();
+                    string detailDir = Path.Combine(recordsDir, "details", username);
+                    Directory.CreateDirectory(detailDir);
+                    string detailFile = Path.Combine(detailDir, $"detail_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N").Substring(0, 6)}.txt");
+                    File.WriteAllText(detailFile, $"【用户原始需求】\n{inputMessage}\n\n【AI详细执行与回复过程】\n{finalAIResponse}", Encoding.UTF8);
+                    finalAIResponse = string.IsNullOrWhiteSpace(detail) ? "已完成处理 (详细结果请查看日志)" : detail;
+                }
+
                 Console.ResetColor();
                 Console.WriteLine($"\n{finalAIResponse}");
                 Console.ResetColor();
@@ -777,6 +913,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 isDone = true;
             }
         }
+
         if (requireReset)
         {
             // 在清空前，抓取 AI 刚刚输出的最后一句有效内容（即最终工作报告）
@@ -1681,7 +1818,6 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                 await res.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(agentsJsonStr));
                 break;
 
-            // --- 获取配置 ---
             // --- 获取配置 ---
             case "/api/config" when req.HttpMethod == "GET":
                 // 【强绑定联动 1】：将本地已经产生聊天记录的 Agent，自动拉入通讯录，确保能在设置页看到并管理他们
