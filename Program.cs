@@ -85,10 +85,8 @@ var toolsDoc = JsonDocument.Parse("""
     { "type": "function", "function": { "name": "self_update", "description": "当用户要求皮皮虾自我更新、自动更新或升级自身时调用此工具。将从 GitHub 下载最新版本并自动重启。", "parameters": { "type": "object", "properties": {} } } },
     { "type": "function", "function": { "name": "save_memory", "description": "当用户提到重要的个人信息、偏好设定、或者明确要求你'记住'某事时调用此工具。", "parameters": { "type": "object", "properties": { "content": { "type": "string", "description": "要保存的具体记忆内容" } }, "required": ["content"] } } },
     { "type": "function", "function": { "name": "recall_memory", "description": "通过语义向量检索长期记忆库。当用户问'我之前说过什么'、'我的喜好'，或你需要回忆过去的上下文背景时调用。", "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "要检索的关键字或语义短语" } }, "required": ["query"] } } },
-    { "type": "function", "function": { "name": "delegate_task", "description": "向通讯录中的其他友军指派任务。请务必传入关联的 task_id！，禁止向你自己指派任务。", "parameters": { "type": "object", "properties": { "user_name": { "type": "string" }, "task_message": { "type": "string" }, "task_id": { "type": "string", "description": "任务的8位ID" } }, "required": ["user_name", "task_message", "task_id"] } } },
-    { "type": "function", "function": { "name": "update_project_board", "description": "项目经理/CEO 专属工具：根据当前核心目标，拆解出多个平行的子任务/计划，并分配给团队成员。写入后，所有新任务的初始状态均为 todo。", "parameters": { "type": "object", "properties": { "project_name": { "type": "string", "description": "当前大项目名称" }, "tasks": { "type": "array", "description": "要添加到看板的任务列表。必须包含明确的 title 和 assignee。", "items": { "type": "object", "properties": { "title": { "type": "string", "description": "任务具体要求" }, "assignee": { "type": "string", "description": "负责人名字，必须严格从通讯录匹配，绝不能为空！" } }, "required": ["title", "assignee"] } }} } } },
-    { "type": "function", "function": { "name": "update_task_status", "description": "状态同步工具：基层员工在彻底完成任务后，【必须】调用此工具将该任务设为 done，并向老板提交执行结果。", "parameters": { "type": "object", "properties": { "task_id": { "type": "string", "description": "任务的8位ID" }, "status": { "type": "string", "description": "状态，必须是: todo, doing, done" }, "result": { "type": "string", "description": "任务执行的最终结果总结、产出物路径或测试报告，让老板能直接在看板上看到你的工作成果。" } }, "required": ["task_id", "status"] } } },
-    { "type": "function", "function": { "name": "delete_project_board", "description": "项目经理/CEO 专属工具：当一个大项目彻底完结、或者你需要建立一个与老项目完全无关的新项目时，调用此工具一键清空旧看板。", "parameters": { "type": "object", "properties": {} } } }]
+    { "type": "function", "function": { "name": "delegate_task", "description": "向通讯录中的其他友军指派任务。请务必传入关联的 task_id！，禁止向你自己指派任务。", "parameters": { "type": "object", "properties": { "user_name": { "type": "string" }, "task_message": { "type": "string" }, "task_id": { "type": "string", "description": "任务的8位ID" } }, "required": ["user_name", "task_message", "task_id"] } } }
+]
 """);
 //在没有找到合适的  搜索 api 之前先注释
 //  { "type": "function", "function": { "name": "delegate_task", "description": "向通讯录中的其他皮皮虾节点指派任务。请从系统提示词的【友军通讯录】中查找对方的准确名字。严禁委派给当前节点自己！", "parameters": { "type": "object", "properties": { "user_name": { "type": "string", "description": "目标节点的名称，例如 '树莓派'" }, "task_message": { "type": "string", "description": "你要交办的具体任务内容" } }, "required": ["user_name", "task_message"] } } },
@@ -329,11 +327,29 @@ while (true)
 return;
 
 // ========================== 10. 核心 Agent 处理逻辑 ==========================
-async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, int modelIndex = 0, string username = "local", string caller = "", string teamUrl = "", string sop = "")
+async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, int modelIndex = 0, string username = "local", string caller = "", string teamUrl = "", string sop = "", string taskId = "")
 {
 
     var userLock = userLocks.GetOrAdd(username, _ => new SemaphoreSlim(100, 100));
     await userLock.WaitAsync();
+
+
+    if (!string.IsNullOrEmpty(taskId) && !string.IsNullOrEmpty(teamUrl))
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var updatePayload = $"{{\"tasks\": [{{\"id\": \"{taskId}\", \"status\": \"doing\"}}]}}";
+                using var statusReq = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
+                statusReq.Content = new StringContent(updatePayload, Encoding.UTF8, "application/json");
+                await client.SendAsync(statusReq);
+            }
+            catch { }
+        });
+    }
+
+
     var liveStream = new List<PushMsg>();
     userLiveStream[username] = liveStream;
     Action<string, string> PushUpdate = (type, content) =>
@@ -414,7 +430,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 : "";
 
             var nodeIdentityStr = !string.IsNullOrEmpty(username)
-                ? $"你当前是【{username}】皮皮虾。如【友军通讯录】中看到你自己！请直接用本地工具执行，绝对不要委派给自己！\n你的使命：以本地优先、完成用户提出的任何任务，不限于运维/开发/数据/知识检索。你可随时通过 Skill-Hub 安装技能扩展能力。"
+                ? $"你当前是【{username}】皮皮虾"
                 : "";
 
             var customPrompt = "";
@@ -424,12 +440,6 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                    ? GlobalConfig.SystemPrompt
                    : "";
             }
-
-            var peersStr = (GlobalConfig.PeerNodes != null && GlobalConfig.PeerNodes.Count > 0)
-                ? string.Join("\n", GlobalConfig.PeerNodes.Select(p =>
-                    $"- 【{p.Key}】皮皮虾\n  能力说明: 【{p.Value.Role}】{p.Value.Description}" +
-                    (!string.IsNullOrWhiteSpace(p.Value.Resume) ? $"\n  详细介绍: {p.Value.Resume}" : "")))
-                : "暂无已知友军节点";
 
             var boardContext = "暂无进行中的项目看板信息";
             if (!string.IsNullOrEmpty(teamUrl))
@@ -471,44 +481,31 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                      【记忆管理架构】：
                                          [技能调用与经验沉淀策略] 
                                          1. 检索：查阅下方已安装技能的摘要。
-                                         2. 实战：若需使用某技能，优先用 read_file 读取其目录下的 experience.txt（实战干货）。若没有，再去读 skill.md（官方文档）。
-                                         3. 沉淀与进化：当你【成功跑通】某技能的具体功能并解决报错后，必须将经验沉淀到 experience.txt。
-                                             - 强制 SOP：① 必须先 read_file 读取现有的 experience.txt。② 在脑内将新经验按【具体调用的方法/子命令】分类，与老经验进行合并、去重、纠错。③ 使用 write_file 将合并后的新内容完整覆写回去。
-                                             - 内容格式：绝对不要写废话！按 Markdown 结构记录：`### 方法名` -> `- 核心测试命令` -> `- 避坑/报错解决指南`。拒绝简单粗暴的流水账追加。
+                                         2. 实战：优先用 read_file 读取技能目录下的 experience.txt。
+                                         3. 沉淀：成功跑通某技能后，将新经验按该“具体方法”合并去重，并写回 experience.txt。
 
                                      【身份认知】
                                         {{nodeIdentityStr}}
+                                        
+                                     【任务委派与沟通 (delegate_task)】
+                                        用户（老板）在下发任务时，会直接在需求中指定“你可以找谁沟通/配合”。当你需要转交任务或请教对方时，请直接使用 delegate_task 工具呼叫老板指定的名字即可。不要询问老板通讯录在哪里。
 
-                                     【友军通讯录 (Peer Nodes)】：
-                                        当用户提的需求友军能力满足的时候，优先调用 delegate_task 工具，以下是友军的能力说明：
-                                        {{peersStr}}
-                                      
-                                     【团队进度与项目看板 (Project Board)】
-                                         {{boardContext}}
-                                         [流水线调度与断点续传指令 (CEO/项目经理必读)]：
-                                         1. 状态机法则：当用户要求“接着做”、“继续推进”或“查看进度”时，你【必须】仔细阅读上述看板中各个子任务的 Status。
-                                         2. 寻找堵点：检查哪些前置任务已经完成 (DONE)。
-                                         3. 自动派发：找出当前卡在进度上、需要立刻执行的首个待办任务 (TODO)。不要询问用户，直接调用 `delegate_task` 工具，将该任务派发给对应的负责人 (Assignee) 开始干活！
-                                         4. 留言规范：派发时，务必在留言中带上任务的 ID，并命令对方：“做完后必须调用 update_task_status 工具把任务标记为 done！”
-
-                                     【PiPiClaw 挂起的定时任务（包含 task_id，供你管理任务时参考）】：
+                                     【PiPiClaw 挂起的定时任务（包含 task_id，供参考）】：
                                         {{currentTasksJson}}
 
                                      【本地已安装的扩展技能及绝对路径说明】：
                                          {{GetInstalledSkillsContext(username)}}
-                                         本地技能优先级高于队友能力。如果本地没有这个技能再去找相关队友。
+                                         本地技能优先级高于一切。
 
                                      【记忆与上下文折叠机制 (极其重要)】
                                         1. 注意：你每次回复时，必须先使用 <Summary>摘要文本</Summary> 标签包裹 10 到 20 字的本轮执行摘要，然后再输出给用户的详细正文。
-                                        2. 注意：如果被折叠内有结果文件 优先调用 readfile 去读取被折叠内容，尽量不要重复去做以前做过的事。比如之前看桌面记录然后被折叠起来，后面就不要再执行命令去看桌面记录而是应该 readfile 去看历史记录。这是一个例子，你不管做什么都要参考这个例子。切勿执行多次已执行过的命令。
+                                        2. 若被折叠的上下文中提及了结果文件，优先调用 readfile 去读取。切勿重复执行已做过的命令。
                                      """;
 
-            var payloadMessages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPromptText } };
-            // ========================== 核心修复：滑动窗口折叠 (仅拦截发给大模型的 Payload) ==========================
+            var payloadMessages = new List<ChatMessage> { new() { Role = "system", Content = systemPromptText } };
             var clonedHistory = history.Select(m => m.DeepClone()).ToList();
             int totalUserTurns = clonedHistory.Count(m => m.Role == "user");
 
-            // 只要历史对话超过 5 轮，就开始折叠最早的回合，始终保留最近的 4 轮上下文活跃
             int turnsToFold = totalUserTurns - 4;
 
             if (turnsToFold > 0)
@@ -522,24 +519,19 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     var mssage = clonedHistory[i];
                     if (mssage.Role == "user") currentTurn++;
 
-                    // 【核心逻辑】：如果在需要被折叠的旧回合窗口内
                     if (currentTurn <= turnsToFold)
                     {
                         if (mssage.Role == "user")
                         {
-                            optimizedHistory.Add(mssage); // 永远保留 User 的原始需求
+                            optimizedHistory.Add(mssage);
                             turnBuffer.Clear();
                         }
                         else
                         {
-                            // 收集当前回合的所有 assistant 和 tool 消息
                             turnBuffer.Add(mssage);
-
-                            // 判断是否是该回合的最后一条消息 (结尾，或是下一条就是新的 User 提问)
                             bool isTurnEnd = (i == clonedHistory.Count - 1) || (clonedHistory[i + 1].Role == "user");
                             if (isTurnEnd && turnBuffer.Count > 0)
                             {
-                                // 1. 提取本回合的摘要作为 Key
                                 string sumText = "未知历史回合";
                                 var sumMsg = turnBuffer.LastOrDefault(m => m.Role == "assistant" && m.Content != null && m.Content.Contains("<Summary>"));
                                 if (sumMsg != null)
@@ -552,8 +544,6 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                         sumText = sumMsg.Content.Substring(sIdx + sTag.Length, eIdx - sIdx - sTag.Length).Trim();
                                     }
                                 }
-
-                                // 2. 将 assistant 与 tool 打包折叠为完整的 Content 上下文
                                 var sb = new StringBuilder();
                                 sb.AppendLine($"【摘要 Key】: {sumText}");
                                 sb.AppendLine("【详细折叠上下文 Content】:");
@@ -576,12 +566,8 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                         sb.AppendLine($"[工具执行结果]:\n{tb.Content}");
                                     }
                                 }
-
-                                // 3. 落盘：以摘要为依据生成独立的日志文件，确保 AI 能通过 Key 检索到
                                 string detailDir = Path.Combine(recordsDir, "details", username);
                                 Directory.CreateDirectory(detailDir);
-
-                                // 生成哈希防止重复覆盖，生成 safeKey 保证文件名合法
                                 string hash = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(sumText + sb.Length))).Substring(0, 8);
                                 string safeKey = string.Join("_", sumText.Split(Path.GetInvalidFileNameChars())).Replace(" ", "_");
                                 if (safeKey.Length > 30) safeKey = safeKey.Substring(0, 30);
@@ -590,8 +576,6 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                 string filePath = Path.Combine(detailDir, "folds", fileName);
                                 if (!Directory.Exists(Path.Combine(detailDir, "folds")))
                                     Directory.CreateDirectory(Path.Combine(detailDir, "folds"));
-
-                                // 防抖：如果这回合已经被持久化过了，就不必重复写磁盘
                                 if (!File.Exists(filePath))
                                 {
                                     File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
@@ -609,7 +593,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     }
                     else
                     {
-                        // 【保留窗口内】：近期活跃的消息不需要折叠，但为了省 Token 依然清空大模型的内部脑补 reasoning_content
+
                         if (mssage.Role == "assistant") mssage.ReasoningContent = null;
                         optimizedHistory.Add(mssage);
                     }
@@ -806,57 +790,6 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                             case "self_update": result = await SelfUpdate(); break;
                             case "execute_command": result = await RunCmd(GetStrProp(tempArgs, "command"), PushUpdate, GetBoolProp(tempArgs, "is_background"), taskCts.Token); break;
                             case "delegate_task": result = await DelegateTaskAsync(username, GetStrProp(tempArgs, "user_name"), GetStrProp(tempArgs, "task_message"), GetStrProp(tempArgs, "task_id"), teamUrl, sop); break;
-                            case "update_project_board":
-                                try
-                                {
-                                    if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法更新看板。"; break; }
-                                    using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
-                                    req.Content = new StringContent(argsString, Encoding.UTF8, "application/json");
-                                    var res = await client.SendAsync(req);
-
-                                    // 👉 修改此处的系统回传话术
-                                    result = res.IsSuccessStatusCode
-                                        ? "[系统] 多项任务计划已成功写入看板。⚠️【系统强制指令】：请不要停止！现在请直接调用 delegate_task 把当前【阶段首个或首批需要立即执行】的任务派发给对应的 assignee！记得留言附带任务ID，并命令他们做完后自行标为 done。注意：如果是需要排队串行的后续任务，请先不要派发，保留在 todo 状态，等前置任务 done 了再说！"
-                                        : "[系统] 同步失败，中控不在线。";
-                                }
-                                catch { result = "[系统异常] 无法连接到中控服务器。"; }
-                                break;
-
-                            case "update_task_status":
-                                try
-                                {
-                                    if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法更新看板。"; break; }
-
-                                    // 使用安全的对象序列化，防止结果中的换行、双引号破坏 JSON 格式
-                                    var updateObj = new ProjectBoard
-                                    {
-                                        Tasks = new List<ProjectTask> {
-                                        new ProjectTask {
-                                            Id = GetStrProp(tempArgs, "task_id"),
-                                            Status = GetStrProp(tempArgs, "status"),
-                                            Result = GetStrProp(tempArgs, "result")
-                                        }
-                                    }
-                                    };
-                                    var taskJson = JsonSerializer.Serialize(updateObj, AppJsonContext.Default.ProjectBoard);
-
-                                    using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
-                                    req.Content = new StringContent(taskJson, Encoding.UTF8, "application/json");
-                                    var res = await client.SendAsync(req);
-                                    result = res.IsSuccessStatusCode ? $"[系统] 任务 {GetStrProp(tempArgs, "task_id")} 状态与结果已成功同步至看板。" : "[系统] 同步失败。";
-                                }
-                                catch { result = "[系统异常] 无法连接到中控服务器。"; }
-                                break;
-                            case "delete_project_board":
-                                try
-                                {
-                                    if (string.IsNullOrEmpty(teamUrl)) { result = "[系统拦截] 当前任务缺少中控地址上下文，无法删除看板。这可能是因为脱离了 Team 面板发起。"; break; }
-                                    using var req = new HttpRequestMessage(HttpMethod.Delete, $"{teamUrl.TrimEnd('/')}/api/board");
-                                    var res = await client.SendAsync(req);
-                                    result = res.IsSuccessStatusCode ? "[系统] 项目看板已成功清空并结项。" : "[系统] 同步失败，中控不在线。";
-                                }
-                                catch { result = "[系统异常] 无法连接到中控服务器。"; }
-                                break;
                             default:
                                 result = fnName switch
                                 {
@@ -889,6 +822,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             }
             else
             {
+
                 finalAIResponse = msg.Content ?? "";
                 string startTag = "<Summary>";
                 string endTag = "</Summary>";
@@ -912,6 +846,39 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 PushUpdate?.Invoke("final", finalAIResponse);
                 isDone = true;
             }
+        }
+
+        // 【新增：整个思维与执行链条全部跑完，自动向看板回传 done 状态与结果报告】
+        if (!string.IsNullOrEmpty(taskId) && !string.IsNullOrEmpty(teamUrl))
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var updateObj = new ProjectBoard
+                    {
+                        Tasks = new List<ProjectTask> {
+                            new ProjectTask {
+                                Id = taskId,
+                                Status = "done",
+                                Result = finalAIResponse
+                            }
+                        }
+                    };
+                    var taskJson = JsonSerializer.Serialize(updateObj, AppJsonContext.Default.ProjectBoard);
+                    using var req = new HttpRequestMessage(HttpMethod.Post, $"{teamUrl.TrimEnd('/')}/api/board");
+                    req.Content = new StringContent(taskJson, Encoding.UTF8, "application/json");
+                    var res = await client.SendAsync(req);
+
+                    if (res.IsSuccessStatusCode)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"\n[系统联动] 任务 {taskId} 执行完毕，已全自动将状态同步为 done 并提交工作结果！");
+                        Console.ResetColor();
+                    }
+                }
+                catch { }
+            });
         }
 
         if (requireReset)
@@ -1103,7 +1070,7 @@ async Task ScheduleLoop()
                             Console.ForegroundColor = ConsoleColor.Magenta;
                             Console.WriteLine($"\n\n[🔔 皮皮虾唤醒] 正在接管系统执行预定需求: {intent} (归属: {taskUser})");
                             Console.ResetColor();
-                            await RunAgent($"[系统级注入] 这是一个系统自动触发的定时任务。你之前设定了在此时执行该任务，用户的原始需求是：【{intent}】。请立刻处理，绝不要尝试手动重新添加定时任务，完成后调用 finish_task 结束。", true, 0, taskUser);
+                            await RunAgent($"[系统级注入] 这是一个系统自动触发的定时任务。你之前设定了在此时执行该任务，用户的原始需求是：【{intent}】。请立刻处理，绝不要尝试手动重新添加定时任务，完成后调用 finish_task 结束。", true, 0, taskUser, taskId);
                         }
                         catch (Exception ex)
                         {
@@ -2111,7 +2078,7 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                     if (chatReqObj != null)
                     {
                         // 去掉了老版本的 onUpdate 参数传递
-                        await RunAgent(chatReqObj.Message, false, chatReqObj.ModelIndex, username, "", teamUrl, chatReqObj.Sop);
+                        await RunAgent(chatReqObj.Message, false, chatReqObj.ModelIndex, username, "", teamUrl, chatReqObj.Sop, chatReqObj.TaskId);
                     }
                     userConnections.TryRemove(username, out _);
                 }
@@ -2154,10 +2121,8 @@ async Task HandleRequestAsync(HttpListenerContext context, int webPort)
                         // ==========================================================
 
                         var caller = chatReqObj.Caller ?? "未知节点";
-                        // 顺便在系统提示词里告诉员工它的 TaskId 是多少，方便它做完后标 done
-                        var injectMsg = $"[系统最高优先级提示：你的队友【{caller}】主动找你沟通/求助。当前关联的任务ID为：{chatReqObj.TaskId}。请直接用自然语言回复，当你彻底完成此任务后，务必调用 update_task_status 将该ID标记为 done！]\n对方发来的消息：{chatReqObj.Message}";
-
-                        var responseText = await RunAgent(injectMsg, false, chatReqObj.ModelIndex, username, chatReqObj.Caller, teamUrl, chatReqObj.Sop);
+                        var injectMsg = $"[系统最高优先级提示：你的队友【{caller}】主动找你沟通/求助。当前关联的任务ID为：{chatReqObj.TaskId}。请直接用自然语言回复工作结果，当你彻底完成此任务准备交付时，务必在回复的最末尾附带标签 <done>{chatReqObj.TaskId}</done> ！]\n对方发来的消息：{chatReqObj.Message}";
+                        var responseText = await RunAgent(injectMsg, false, chatReqObj.ModelIndex, username, chatReqObj.Caller, teamUrl, chatReqObj.Sop, chatReqObj.TaskId);
                         res.ContentType = "text/plain; charset=utf-8";
                         var respBytes = Encoding.UTF8.GetBytes(responseText);
                         await res.OutputStream.WriteAsync(respBytes);
