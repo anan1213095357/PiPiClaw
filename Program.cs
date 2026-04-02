@@ -461,6 +461,12 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                                 foreach (var t in p.Tasks)
                                 {
                                     sb.AppendLine($"- [ID: {t.Id}] [{t.Status.ToUpper()}] {t.Title} (负责人: {t.Assignee})");
+
+                                    // 👇 加上这一段！把已完成任务的产出结果，共享给全员！
+                                    if (t.Status.Equals("done", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(t.Result))
+                                    {
+                                        sb.AppendLine($"  └─ 交付结果: {t.Result}");
+                                    }
                                 }
                             }
                         }
