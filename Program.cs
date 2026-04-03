@@ -1,11 +1,12 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Net.NetworkInformation;
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !Console.IsOutputRedirected)
 {
@@ -639,7 +640,17 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 try
                 {
                     // 注意：每次重试需要重新生成 StringContent，避免流被重复读取导致报错
-                    var content = new StringContent(JsonSerializer.Serialize(payload, AppJsonContext.Default.LlmRequest), Encoding.UTF8, "application/json");
+
+                    var options = new JsonSerializerOptions
+                    {
+                        // 【核心配置】放宽转义限制，让中文和常用符号原样输出
+                        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+
+                        // 【AOT 必备】挂载你的 Source Generator 上下文
+                        TypeInfoResolver = AppJsonContext.Default
+                    };
+
+                    var content = new StringContent(JsonSerializer.Serialize(payload, options), Encoding.UTF8, "application/json");
                     var res = await client.PostAsync(chatEndpoint, content, taskCts.Token);
 
                     if (res.IsSuccessStatusCode)
