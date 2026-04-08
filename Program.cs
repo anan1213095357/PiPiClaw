@@ -602,7 +602,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     else
                     {
 
-                        if (mssage.Role == "assistant") mssage.ReasoningContent = null;
+                        if (mssage.Role == "assistant") mssage.ReasoningContent = "已省略";
                         optimizedHistory.Add(mssage);
                     }
                 }
@@ -613,7 +613,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 // 如果还不到折叠阈值，不需要折叠，但照样清理 reasoning_content
                 foreach (var m in clonedHistory)
                 {
-                    if (m.Role == "assistant") m.ReasoningContent = null;
+                    if (m.Role == "assistant") m.ReasoningContent = "已省略";
                     payloadMessages.Add(m);
                 }
             }
@@ -747,10 +747,6 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 if (msg.Content == "")
                 {
                     msg.Content = null;
-                }
-                if (msg.ReasoningContent == "")
-                {
-                    msg.ReasoningContent = null;
                 }
                 msg.Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             }
