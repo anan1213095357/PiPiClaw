@@ -401,6 +401,7 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
         var userMsg = new ChatMessage { Role = "user", Content = inputMessage, Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
         SafeAddHistory(userMsg);
         var isDone = false;
+        var error400Count = 0;
         while (!isDone)
         {
             using var cts = new CancellationTokenSource();
@@ -684,17 +685,53 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 catch (Exception ex)
                 {
                     lastEx = ex;
+
+                    // 核心判断：拦截 400 错误
+                    bool is400Error = (ex is HttpRequestException httpEx && httpEx.StatusCode == System.Net.HttpStatusCode.BadRequest) 
+                                      || ex.Message.Contains("400");
+
+                    if (is400Error)
+                    {
+                        error400Count++;
+                        if (error400Count >= 10)
+                        {
+                            break; // 满 10 次，立刻跳出这个 retry 循环，交给下面的逻辑去回滚
+                        }
+                    }
+
                     if (retry < maxRetries - 1)
                     {
                         Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        Console.WriteLine($"\n[网络抖动] {ex.Message}，正在进行第 {retry + 1} 次重试...");
+                        Console.WriteLine($"\n[网络抖动/请求异常] {ex.Message}，正在进行第 {retry + 1} 次重试...");
                         Console.ResetColor();
-                        PushUpdate?.Invoke("tool_result", $"[网络抖动] 请求网关失败，准备第 {retry + 1} 次重试...{ex.Message}");
+                        PushUpdate?.Invoke("tool_result", $"[请求异常] 请求网关失败，准备第 {retry + 1} 次重试...{ex.Message}");
                         await Task.Delay(2000, taskCts.Token);
                     }
                 }
             }
-
+            if (error400Count >= 10)
+            {
+                cts.Cancel(); await animTask;
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("\n[系统拦截] 连续 10 次 400 错误！判定上一轮上下文已严重污染，正在砍掉历史记录回滚...");
+                Console.ResetColor();
+                PushUpdate?.Invoke("tool_result", "[系统操作] 上下文被API拒绝，已强行切除毒化记录，回到上一步重试...");
+                lock (history)
+                {
+                    while (history.Count > 0 && history.Last().Role == "tool")
+                    {
+                        history.RemoveAt(history.Count - 1);
+                    }
+                    if (history.Count > 0 && history.Last().Role == "assistant")
+                    {
+                        history.RemoveAt(history.Count - 1);
+                    }
+                    SaveData(history, historyPath);
+                }
+                
+                error400Count = 0;
+                continue; 
+            }
             if (!isSuccess)
             {
                 cts.Cancel(); await animTask;
