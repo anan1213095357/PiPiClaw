@@ -423,6 +423,11 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                     catch { }
                 }
             }
+            var agentWorkspace = Path.Combine(AppContext.BaseDirectory, "workspaces", username);
+            if (!Directory.Exists(agentWorkspace)) Directory.CreateDirectory(agentWorkspace);
+            var absoluteWorkspace = Path.GetFullPath(agentWorkspace).Replace("\\", "/");
+            
+            
             var callerStr = !string.IsNullOrEmpty(caller)
                 ? $"\n【任务来源追溯】：当前任务由友军【{caller}】指派。当任务彻底做完准备交付时，请**直接用自然语言输出最终结果**，系统底层会全自动将你的话作为工作报告回传给【{caller}】！绝对不要用 delegate_task 跑去向【{caller}】做最终汇报。(注：若执行中途遇到困难，需要向【{caller}】请教确认需求，仍可使用 delegate_task 联系对方)。\n"
                 : "";
@@ -434,6 +439,64 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
             var nodeIdentityStr = !string.IsNullOrEmpty(username)
                 ? $"你当前是【{username}】皮皮虾"
                 : "";
+            
+            var contactsContext = "";
+            if (!string.IsNullOrEmpty(username) && GlobalConfig.PeerNodes != null && 
+                GlobalConfig.PeerNodes.TryGetValue(username, out var myInfo) && 
+                myInfo.Contacts != null && myInfo.Contacts.Count > 0)
+            {
+                var sbContacts = new StringBuilder();
+                sbContacts.AppendLine("【你的专属通讯录与友军能力清单 (可用 delegate_task 委派)】");
+                foreach (var cName in myInfo.Contacts)
+                {
+                    if (!GlobalConfig.PeerNodes.TryGetValue(cName, out var cInfo)) continue;
+                    sbContacts.Append($"- 姓名: {cName}, 岗位: {cInfo.Role}, 能力说明: {cInfo.Description}");
+
+                    // 👇 动态扫描该队友名下已安装的技能包摘要
+                    var peerSkillsDir = Path.Combine(AppContext.BaseDirectory, "skills", cName);
+                    var skillSummaries = new List<string>();
+                    if (Directory.Exists(peerSkillsDir))
+                    {
+                        foreach (var dir in Directory.GetDirectories(peerSkillsDir))
+                        {
+                            var slug = new DirectoryInfo(dir).Name;
+                            var summaryPath = Path.Combine(dir, "summary.txt");
+                            if (File.Exists(summaryPath))
+                            {
+                                try
+                                {
+                                    var summaryText = File.ReadAllText(summaryPath, Encoding.UTF8).Trim();
+                                    skillSummaries.Add($"[{slug}: {summaryText}]");
+                                }
+                                catch { }
+                            }
+                            else
+                            {
+                                skillSummaries.Add($"[{slug}: 暂无描述]");
+                            }
+                        }
+                    }
+
+                    if (skillSummaries.Count > 0)
+                    {
+                        sbContacts.Append($", 已装载的底层工具包: {string.Join(", ", skillSummaries)}");
+                    }
+                    else
+                    {
+                        sbContacts.Append(", 已装载的底层工具包: 无特殊技能");
+                    }
+                        
+                    sbContacts.AppendLine(); // 换行收尾
+                }
+                sbContacts.AppendLine("（请根据上述队友的专长和【已装载的底层工具包】，自主决定是否需要使用 delegate_task 工具向他们分包任务、求助或交接工作结果！）");
+                contactsContext = sbContacts.ToString();
+            }
+            else
+            {
+                // 如果没有勾选联系人，保留原有的保底提示词
+                contactsContext = "【任务委派与沟通】\n用户（老板）可能会在需求中指定“你可以找谁配合”。如果你知道对方名字，请直接使用 delegate_task 工具呼叫对方。";
+            }
+            
 
             var customPrompt = "";
             if (string.IsNullOrEmpty(nodeIdentityStr))
@@ -478,37 +541,46 @@ async Task<string> RunAgent(string inputMessage, bool isScheduledEvent = false, 
                 catch { }
             }
 
-            var systemPromptText = $$"""
-                                     {{customPrompt}}
-                                     {{companySopStr}}
-                                     {{callerStr}}
-                                     【当前环境状态】
-                                         当前系统：{{RuntimeInformation.OSDescription}}。当前时间是 {{DateTimeOffset.Now:yyyy-MM-ddTHH:mm:sszzz}}。
-                                         {{sudoInstruction}}
+            var systemPromptText = $"""
+                                       {customPrompt}
+                                       {companySopStr}
+                                       {callerStr}
+                                       【当前环境状态】
+                                           当前系统：{RuntimeInformation.OSDescription}。当前时间是 {DateTimeOffset.Now:yyyy-MM-ddTHH:mm:sszzz}。
+                                           {sudoInstruction}
 
-                                     【记忆管理架构】：
-                                         [技能调用与经验沉淀策略] 
-                                         1. 检索：查阅下方已安装技能的摘要。
-                                         2. 实战：优先用 read_file 读取技能目录下的 experience.txt。
-                                         3. 沉淀：成功跑通某技能后，将新经验按该“具体方法”合并去重，并写回 experience.txt。
+                                       【记忆管理架构】：
+                                           [技能调用与经验沉淀策略] 
+                                           1. 检索：查阅下方已安装技能的摘要。
+                                           2. 实战：优先用 read_file 读取技能目录下的 experience.txt。
+                                           3. 沉淀：成功跑通某技能后，将新经验按该“具体方法”合并去重，并写回 experience.txt。
 
-                                     【身份认知】
-                                        {{nodeIdentityStr}}
-                                        
-                                     【任务委派与沟通 (delegate_task)】
-                                        用户（老板）在下发任务时，会直接在需求中指定“你可以找谁沟通/配合”。当你需要转交任务或请教对方时，请直接使用 delegate_task 工具呼叫老板指定的名字即可。不要询问老板通讯录在哪里。
+                                       【身份认知】
+                                          {nodeIdentityStr}
+                                          
+                                          {contactsContext}
+                                       
+                                       
+                                       【PiPiClaw 挂起的定时任务（包含 task_id，供参考）】：
+                                          {currentTasksJson}
 
-                                     【PiPiClaw 挂起的定时任务（包含 task_id，供参考）】：
-                                        {{currentTasksJson}}
+                                       【本地已安装的扩展技能及绝对路径说明】：
+                                           {GetInstalledSkillsContext(username)}
+                                           优先调用本地技能。
+                                           
+                                       【身份认知与沙盒边界限制】
+                                            {nodeIdentityStr}
+                                       
+                                       【你的物理边界与专属工作区】
+                                            你的专属安全工作区绝对路径是：{absoluteWorkspace}
+                                            1. 你的终端命令(execute_command)默认会直接在该目录下启动执行。
+                                            2. 你编写的所有代码、生成的数据、分析报告等，【必须且只能】保存在这个工作区内！
+                                            3. 严禁窥探、修改属于其他节点（同事）的 workspace 或 skills 目录！否则将被判定为越权违规操作！
 
-                                     【本地已安装的扩展技能及绝对路径说明】：
-                                         {{GetInstalledSkillsContext(username)}}
-                                         本地技能优先级高于一切。
-
-                                     【记忆与上下文折叠机制 (极其重要)】
-                                        1. 注意：你每次回复时，必须先使用 <Summary>摘要文本</Summary> 标签包裹 10 到 20 字的本轮执行摘要，然后再输出给用户的详细正文。
-                                        2. 若被折叠的上下文中提及了结果文件，优先调用 readfile 去读取。切勿重复执行已做过的命令。
-                                     """;
+                                       【记忆与上下文折叠机制 (极其重要)】
+                                          1. 注意：你每次回复时，必须先使用 <Summary>摘要文本</Summary> 标签包裹 10 到 20 字的本轮执行摘要，然后再输出给用户的详细正文。
+                                          2. 若被折叠的上下文中提及了结果文件，优先调用 readfile 去读取。切勿重复执行已做过的命令。
+                                       """;
 
             var payloadMessages = new List<ChatMessage> { new() { Role = "system", Content = systemPromptText } };
             var clonedHistory = history.Select(m => m.DeepClone()).ToList();
@@ -3892,13 +3964,15 @@ string GetWebUIHtml()
                     const url = info.Url || info.url || '';
                     const role = info.Role || info.role || '';
                     const desc = info.Description || info.description || '';
-                    const resume = info.Resume || info.resume || ''; // 👈 新增提取简历
-                    addPeerNodeRow(key, url, role, desc, resume);
+                    const resume = info.Resume || info.resume || '';
+                    // 👇 提取出关联的通讯录，转成逗号分隔的字符串以便修改
+                    const contacts = (info.Contacts || info.contacts || []).join(','); 
+                    addPeerNodeRow(key, url, role, desc, resume, contacts);
                 }
             }
         }
 
-        function addPeerNodeRow(key = '', url = '', role = '', desc = '', resume = '') {
+        function addPeerNodeRow(key = '', url = '', role = '', desc = '', resume = '', contacts = '') {
             const container = document.getElementById('peerNodesConfigContainer');
             container.insertAdjacentHTML('beforeend', `
                 <div class="config-model-item" style="padding: 10px 15px; margin-bottom: 10px;">
@@ -3921,6 +3995,10 @@ string GetWebUIHtml()
                             <input type="text" class="cfg-peer-desc" value="${escapeHtml(desc)}" placeholder="负责控制灯光或信息检索..." />
                         </div>
                         <div class="form-group" style="margin-top: 10px; grid-column: span 2;">
+                            <label>关联通讯录 (Contacts)</label>
+                            <input type="text" class="cfg-peer-contacts" value="${escapeHtml(contacts)}" placeholder="输入允许他指派任务的队友名称，用逗号分隔 (如: 李四,王五)" />
+                        </div>
+                        <div class="form-group" style="margin-top: 10px; grid-column: span 2;">
                             <label>个人简历/详细人设 (Resume)</label>
                             <textarea class="cfg-peer-resume" placeholder="详细描述该Agent的背景、性格、专业技能等..." style="width: 100%; min-height: 60px; padding: 10px; border-radius: 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main); font-family: var(--font-mono); resize: vertical;">${escapeHtml(resume)}</textarea>
                         </div>
@@ -3929,7 +4007,6 @@ string GetWebUIHtml()
             `);
         }
 
-
         function getPeerNodesFromUI() {
             const peerNodes = {};
             document.querySelectorAll('#peerNodesConfigContainer .config-model-item').forEach(el => {
@@ -3937,9 +4014,15 @@ string GetWebUIHtml()
                 const url = el.querySelector('.cfg-peer-url').value.trim();
                 const role = el.querySelector('.cfg-peer-role').value.trim();
                 const desc = el.querySelector('.cfg-peer-desc').value.trim();
-                const resume = el.querySelector('.cfg-peer-resume').value.trim(); // 👈 抓取简历数据
+                const resume = el.querySelector('.cfg-peer-resume').value.trim();
+                
+                // 👇 从输入框重新解析通讯录数组，防止保存时丢数据
+                const contactsStr = el.querySelector('.cfg-peer-contacts').value.trim();
+                const contacts = contactsStr ? contactsStr.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+
                 if (name && url) {
-                    peerNodes[name] = { Url: url, Role: role, Description: desc, Resume: resume };
+                    // 👇 加入 Contacts 字段进行保存
+                    peerNodes[name] = { Url: url, Role: role, Description: desc, Resume: resume, Contacts: contacts };
                 }
             });
             return peerNodes;
@@ -4572,6 +4655,7 @@ public class PeerNodeInfo
     [JsonPropertyName("Description")] public string Description { get; set; } = "";
     [JsonPropertyName("Resume")] public string Resume { get; set; } = "";
     [JsonPropertyName("ModelIndex")] public int ModelIndex { get; set; } = 0;
+    [JsonPropertyName("Contacts")] public List<string> Contacts { get; set; } = [];
 }
 public class TaskItem
 {
